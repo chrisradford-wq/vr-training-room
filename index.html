@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <title>VR Training Room</title>
+
+  <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+
+  <script src="https://unpkg.com/super-hands@5.0.2/dist/super-hands.min.js"></script>
+
+  <script src="https://cdn.jsdelivr.net/npm/aframe-extras@7.2.0/dist/aframe-extras.min.js"></script>
+</head>
+
+<body>
+
+<a-scene>
+
+  <!-- SKY / BACKGROUND -->
+  <a-sky color="#BBBBBB"></a-sky>
+
+  <!-- FLOOR -->
+  <a-plane
+    position="0 0 0"
+    rotation="-90 0 0"
+    width="20"
+    height="20"
+    color="#666666">
+  </a-plane>
+
+  <!-- BACK WALL -->
+  <a-plane
+    position="0 5 -10"
+    width="20"
+    height="10"
+    color="#999999">
+  </a-plane>
+
+  <!-- LEFT WALL -->
+  <a-plane
+    position="-10 5 0"
+    rotation="0 90 0"
+    width="20"
+    height="10"
+    color="#555555">
+  </a-plane>
+
+  <!-- RIGHT WALL -->
+  <a-plane
+    position="10 5 0"
+    rotation="0 -90 0"
+    width="20"
+    height="10"
+    color="#555555">
+  </a-plane>
+
+  <!-- CEILING -->
+  <a-plane
+    position="0 10 0"
+    rotation="90 0 0"
+    width="20"
+    height="20"
+    color="#1">
+  </a-plane>
+  <!-- ========================= -->
+  <!-- DESK -->
+  <!-- ========================= -->
+
+  <!-- DESK TOP -->
+  <a-box
+    position="0 0.75 2"
+    width="2"
+    height="0.08"
+    depth="1"
+    color="#5A4A3A">
+  </a-box>
+
+  <!-- FRONT LEFT LEG -->
+  <a-box
+    position="-0.9 0.35 1.6"
+    width="0.08"
+    height="0.7"
+    depth="0.08"
+    color="#444444">
+  </a-box>
+
+  <!-- FRONT RIGHT LEG -->
+  <a-box
+    position="0.9 0.35 1.6"
+    width="0.08"
+    height="0.7"
+    depth="0.08"
+    color="#444444">
+  </a-box>
+
+  <!-- REAR LEFT LEG -->
+  <a-box
+    position="-0.9 0.35 2.4"
+    width="0.08"
+    height="0.7"
+    depth="0.08"
+    color="#444444">
+  </a-box>
+
+  <!-- REAR RIGHT LEG -->
+  <a-box
+    position="0.9 0.35 2.4"
+    width="0.08"
+    height="0.7"
+    depth="0.08"
+    color="#444444">
+  </a-box>
+  <!-- AMBIENT LIGHT -->
+  <a-light
+    type="ambient"
+    intensity="0.8">
+  </a-light>
+
+  <!-- MAIN DIRECTIONAL LIGHT -->
+  <a-light
+    type="directional"
+    intensity="1"
+    position="2 8 4">
+  </a-light>
+
+  <<head>
+  <meta charset="utf-8">
+  <title>VR Training Room</title>
+
+  <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+
+  <script src="https://unpkg.com/super-hands@5.0.2/dist/super-hands.min.js"></script>
+</head>
+<a-image
+  src="assets/claas - white background.svg"
+  position="0 5 -9.9"
+  width="9"
+  height="7">
+</a-image>
+
+    <!-- ========================= -->
+  <!-- MODEL 1 -->
+  <!-- ========================= -->
+
+  <a-entity
+    id="model1"
+
+    class="clickable"
+    grabbable
+    stretchable
+    rotatable
+
+    gltf-model="models/carburetor.glb"
+
+   position=".2 1.1 2.2"
+  rotation="0 45 0"
+  scale=".25 .25 .25">
+
+
+    visible="true">
+  </a-entity>
+
+
+  <!-- ========================= -->
+  <!-- MODEL 2 -->
+  <!-- ========================= -->
+
+  <a-entity
+    id="model2"
+
+    class="clickable"
+    grabbable
+    stretchable
+    rotatable
+
+    gltf-model="models/worm_drive.glb"
+
+    animation-mixer    
+
+    position=".2 1.1 2.2"
+    rotation="0 0 0"
+    scale="0.007 0.007 0.007"
+
+    visible="false">
+  </a-entity>
+
+
+  <!-- ========================= -->
+  <!-- CAMERA / VR RIG -->
+  <!-- ========================= -->
+
+  <a-entity id="rig" position="0 0 3">
+
+    <!-- CAMERA -->
+    <a-camera position="0 1.2 0"></a-camera>
+
+    <!-- LEFT HAND -->
+    <a-entity
+      laser-controls="hand: left"
+      raycaster="objects: .clickable"
+      super-hands>
+    </a-entity>
+
+    <!-- RIGHT HAND -->
+    <a-entity
+      laser-controls="hand: right"
+      raycaster="objects: .clickable"
+      super-hands>
+    </a-entity>
+
+  </a-entity>
+
+
+  <!-- ========================= -->
+  <!-- KEYBOARD MODEL SWITCHING -->
+  <!-- ========================= -->
+
+  <script>
+
+    document.addEventListener('keydown', function(event) {
+
+      const model1 = document.querySelector('#model1');
+      const model2 = document.querySelector('#model2');
+
+      // PRESS 1
+      if (event.key === '1') {
+
+        model1.setAttribute('visible', true);
+        model2.setAttribute('visible', false);
+
+      }
+
+      // PRESS 2
+      if (event.key === '2') {
+
+        model1.setAttribute('visible', false);
+        model2.setAttribute('visible', true);
+
+      }
+
+    });
+
+  </script>
+
+</a-scene>
+
+</body>
+
+</html>
