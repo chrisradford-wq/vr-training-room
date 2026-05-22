@@ -10,11 +10,13 @@
   <script src="https://unpkg.com/super-hands@5.0.2/dist/super-hands.min.js"></script>
 
   <script src="https://cdn.jsdelivr.net/npm/aframe-extras@7.2.0/dist/aframe-extras.min.js"></script>
+
+  <script src="https://unpkg.com/aframe-event-set-component@5.0.0/dist/aframe-event-set-component.min.js"></script>
 </head>
 
 <body>
 
-<a-scene>
+<a-scene cursor="rayOrigin: mouse">
 
   <!-- SKY / BACKGROUND -->
   <a-sky color="#BBBBBB"></a-sky>
@@ -184,6 +186,69 @@
     visible="false">
   </a-entity>
 
+<!-- ========================= -->
+  <!-- PREVIOUS BUTTON -->
+  <!-- ========================= -->
+
+  <a-box
+  id="prevButton"
+
+  class="clickable"
+
+  position="-0.78 1 2.3"
+
+  width="0.3"
+  height="0.15"
+  depth="0.08"
+
+  color="#4444ff"
+
+  event-set__enter="_event: mouseenter; color: #6666ff"
+  event-set__leave="_event: mouseleave; color: #4444ff">
+</a-box>
+
+  <a-text
+    value="PREV"
+
+    position="-.93 1 2.35"
+
+    scale="0.5 0.5 0.5"
+
+    color="white">
+  </a-text>
+
+
+  <!-- ========================= -->
+  <!-- NEXT BUTTON -->
+  <!-- ========================= -->
+
+  <a-box
+    id="nextButton"
+
+    class="clickable"
+
+    position="-.8 1.2 2.3"
+
+    width="0.3"
+    height="0.15"
+    depth="0.08"
+
+    color="#44aa44"
+
+    event-set__enter="_event: mouseenter; color: #66cc66"
+    event-set__leave="_event: mouseleave; color: #44aa44">
+</a-box>
+
+  <a-text
+    value="NEXT"
+
+    position="-.95 1.2 2.34"
+
+    scale="0.5 0.5 0.5"
+
+    color="white">
+  </a-text>
+
 
   <!-- ========================= -->
   <!-- CAMERA / VR RIG -->
@@ -192,7 +257,16 @@
   <a-entity id="rig" position="0 0 3">
 
     <!-- CAMERA -->
-    <a-camera position="0 1.2 0"></a-camera>
+    <a-camera position="0 1.2 0">
+
+       <a-cursor
+       rayOrigin="mouse"
+       fuse="false"
+       material="opacity: 0">
+       </a-cursor>
+
+</a-camera>
+    
 
     <!-- LEFT HAND -->
     <a-entity
@@ -215,32 +289,65 @@
   <!-- KEYBOARD MODEL SWITCHING -->
   <!-- ========================= -->
 
-  <script>
+ <script>
 
-    document.addEventListener('keydown', function(event) {
+  let currentModel = 1;
 
-      const model1 = document.querySelector('#model1');
-      const model2 = document.querySelector('#model2');
+  const model1 = document.querySelector('#model1');
+  const model2 = document.querySelector('#model2');
 
-      // PRESS 1
-      if (event.key === '1') {
+  const prevButton = document.querySelector('#prevButton');
+  const nextButton = document.querySelector('#nextButton');
 
-        model1.setAttribute('visible', true);
-        model2.setAttribute('visible', false);
 
-      }
+  // SHOW MODEL FUNCTION
 
-      // PRESS 2
-      if (event.key === '2') {
+  function showModel(modelNumber) {
 
-        model1.setAttribute('visible', false);
-        model2.setAttribute('visible', true);
+    model1.setAttribute('visible', false);
+    model2.setAttribute('visible', false);
 
-      }
+    if (modelNumber === 1) {
+      model1.setAttribute('visible', true);
+    }
 
-    });
+    if (modelNumber === 2) {
+      model2.setAttribute('visible', true);
+    }
 
-  </script>
+  }
+
+
+  // NEXT BUTTON
+
+  nextButton.addEventListener('mousedown', function () {
+
+    currentModel++;
+
+    if (currentModel > 2) {
+      currentModel = 1;
+    }
+
+    showModel(currentModel);
+
+  });
+
+
+  // PREVIOUS BUTTON
+
+  prevButton.addEventListener('mousedown', function () {
+
+    currentModel--;
+
+    if (currentModel < 1) {
+      currentModel = 2;
+    }
+
+    showModel(currentModel);
+
+  });
+
+</script>
 
 </a-scene>
 
