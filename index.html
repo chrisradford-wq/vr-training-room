@@ -22,6 +22,8 @@
   cursor="rayOrigin: mouse"
   physics="gravity: 0">
 
+   drag-model>
+
   <!-- SKY / BACKGROUND -->
   <a-sky color="#BBBBBB"></a-sky>
 
@@ -154,20 +156,19 @@
     id="model1"
 
     class="clickable"
-    grabbable
-    stretchable
-    rotatable
-
-    dynamic-body
-
+    
     gltf-model="models/carburetor.glb"
 
    position=".2 1.1 2.2"
   rotation="0 45 0"
   scale=".25 .25 .25">
 
+   event-set__enter="_event: mouseenter; scale: 0.27 0.27 0.27"
+   event-set__leave="_event: mouseleave; scale: 0.25 0.25 0.25"
 
-    visible="true">
+  visible="true">
+      
+
   </a-entity>
 
 
@@ -179,12 +180,7 @@
     id="model2"
 
     class="clickable"
-    grabbable
-    stretchable
-    rotatable
-
-    dynamic-body
-
+  
     gltf-model="models/worm_drive.glb"
 
     animation-mixer    
@@ -192,6 +188,9 @@
     position=".2 1.1 2.2"
     rotation="0 0 0"
     scale="0.007 0.007 0.007"
+
+     event-set__enter="_event: mouseenter; scale: 0.27 0.27 0.27"
+     event-set__leave="_event: mouseleave; scale: 0.25 0.25 0.25"
 
     visible="false">
   </a-entity>
@@ -278,31 +277,27 @@
 </a-camera>
     
 
-    <!-- LEFT HAND -->
-    <a-entity
-    id="leftHand"
+   <!-- LEFT CONTROLLER -->
+
+<a-entity
+  id="leftHand"
 
   laser-controls="hand: left"
 
   raycaster="objects: .clickable"
-
-  super-hands
-
-  sphere-collider="objects: .clickable"
-  static-body>
+  line="color: red">
 </a-entity>
 
-<!-- RIGHT HAND -->
-    <a-entity
-    id="rightHand"
+
+<!-- RIGHT CONTROLLER -->
+
+<a-entity
+  id="rightHand"
+
   laser-controls="hand: right"
 
   raycaster="objects: .clickable"
-
-  super-hands
-
-  sphere-collider="objects: .clickable"
-  static-body>
+  line="color: blue">
 </a-entity>
 
   </a-entity>
@@ -316,14 +311,37 @@
 
   let currentModel = 1;
 
+  let dragging = false;
+
   const model1 = document.querySelector('#model1');
   const model2 = document.querySelector('#model2');
 
   const prevButton = document.querySelector('#prevButton');
   const nextButton = document.querySelector('#nextButton');
 
+  const leftHand = document.querySelector('#leftHand');
 
-  // SHOW MODEL FUNCTION
+
+  // =========================
+  // GET ACTIVE MODEL
+  // =========================
+
+  function getCurrentModel() {
+
+    if (currentModel === 1) {
+      return model1;
+    }
+
+    if (currentModel === 2) {
+      return model2;
+    }
+
+  }
+
+
+  // =========================
+  // SHOW MODEL
+  // =========================
 
   function showModel(modelNumber) {
 
@@ -341,7 +359,9 @@
   }
 
 
+  // =========================
   // NEXT BUTTON
+  // =========================
 
   nextButton.addEventListener('mousedown', function () {
 
@@ -356,7 +376,9 @@
   });
 
 
+  // =========================
   // PREVIOUS BUTTON
+  // =========================
 
   prevButton.addEventListener('mousedown', function () {
 
@@ -367,6 +389,53 @@
     }
 
     showModel(currentModel);
+
+  });
+
+
+  // =========================
+  // START DRAGGING
+  // =========================
+
+  leftHand.addEventListener('triggerdown', function () {
+
+    dragging = true;
+
+  });
+
+
+  // =========================
+  // STOP DRAGGING
+  // =========================
+
+  leftHand.addEventListener('triggerup', function () {
+
+    dragging = false;
+
+  });
+
+
+  // =========================
+  // DRAG MODEL
+  // =========================
+
+  AFRAME.registerComponent('drag-model', {
+
+    tick: function () {
+
+      if (!dragging) return;
+
+      const activeModel = getCurrentModel();
+
+      const handPosition = leftHand.object3D.position;
+
+      activeModel.object3D.position.x = handPosition.x * 2;
+
+      activeModel.object3D.position.y = handPosition.y;
+
+      activeModel.object3D.position.z = handPosition.z - 1;
+
+    }
 
   });
 
