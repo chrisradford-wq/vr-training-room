@@ -144,19 +144,7 @@
   height="7">
 </a-image>
 
-<a-box
-  position="0 2 1.5"
 
-  color="red"
-
-  class="clickable"
-
-  grabbable
-  stretchable
-  rotatable
-
-  dynamic-body>
-</a-box>
 
     <!-- ========================= -->
   <!-- MODEL 1 -->
@@ -292,6 +280,8 @@
 
     <!-- LEFT HAND -->
     <a-entity
+    id="leftHand"
+
   laser-controls="hand: left"
 
   raycaster="objects: .clickable"
@@ -304,6 +294,7 @@
 
 <!-- RIGHT HAND -->
     <a-entity
+    id="rightHand"
   laser-controls="hand: right"
 
   raycaster="objects: .clickable"
