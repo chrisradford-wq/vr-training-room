@@ -14,15 +14,13 @@
   <script src="https://cdn.jsdelivr.net/npm/aframe-extras@7.2.0/dist/aframe-extras.min.js"></script>
 
   <script src="https://unpkg.com/aframe-event-set-component@5.0.0/dist/aframe-event-set-component.min.js"></script>
-</head>
 
+</head>
 <body>
 
 <a-scene
   cursor="rayOrigin: mouse"
   physics="gravity: 0">
-
-   drag-model>
 
   <!-- SKY / BACKGROUND -->
   <a-sky color="#BBBBBB"></a-sky>
@@ -131,14 +129,7 @@
     position="2 8 4">
   </a-light>
 
-  <<head>
-  <meta charset="utf-8">
-  <title>VR Training Room</title>
-
-  <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
-
-  <script src="https://unpkg.com/super-hands@5.0.2/dist/super-hands.min.js"></script>
-</head>
+ 
 <a-image
   src="assets/claas - white background.svg"
   position="0 5 -9.9"
@@ -152,48 +143,46 @@
   <!-- MODEL 1 -->
   <!-- ========================= -->
 
-  <a-entity
-    id="model1"
+ <a-entity
+  id="model1"
 
-    class="clickable"
-    
-    gltf-model="models/carburetor.glb"
+  class="clickable"
 
-   position=".2 1.1 2.2"
+  gltf-model="models/carburetor.glb"
+
+  position=".2 1.1 2.2"
   rotation="0 45 0"
-  scale=".25 .25 .25">
+  scale=".25 .25 .25"
 
-   event-set__enter="_event: mouseenter; scale: 0.27 0.27 0.27"
-   event-set__leave="_event: mouseleave; scale: 0.25 0.25 0.25"
+  event-set__enter="_event: mouseenter; scale: 0.27 0.27 0.27"
+  event-set__leave="_event: mouseleave; scale: 0.25 0.25 0.25"
 
   visible="true">
-      
-
-  </a-entity>
+</a-entity>
 
 
   <!-- ========================= -->
   <!-- MODEL 2 -->
   <!-- ========================= -->
 
-  <a-entity
-    id="model2"
+<a-entity
+  id="model2"
 
-    class="clickable"
-  
-    gltf-model="models/worm_drive.glb"
+  class="clickable"
 
-    animation-mixer    
+  gltf-model="models/worm_drive.glb"
 
-    position=".2 1.1 2.2"
-    rotation="0 0 0"
-    scale="0.007 0.007 0.007"
+  animation-mixer
 
-     event-set__enter="_event: mouseenter; scale: 0.27 0.27 0.27"
-     event-set__leave="_event: mouseleave; scale: 0.25 0.25 0.25"
+  position=".2 1.1 2.2"
+  rotation="0 0 0"
+  scale="0.007 0.007 0.007"
 
-    visible="false">
-  </a-entity>
+  event-set__enter="_event: mouseenter; scale: 0.009 0.009 0.009"
+  event-set__leave="_event: mouseleave; scale: 0.007 0.007 0.007"
+
+  visible="false">
+</a-entity>
 
 <!-- ========================= -->
   <!-- PREVIOUS BUTTON -->
@@ -307,7 +296,9 @@
   <!-- KEYBOARD MODEL SWITCHING -->
   <!-- ========================= -->
 
- <script>
+<script>
+
+window.onload = function () {
 
   let currentModel = 1;
 
@@ -320,10 +311,11 @@
   const nextButton = document.querySelector('#nextButton');
 
   const leftHand = document.querySelector('#leftHand');
+  const rightHand = document.querySelector('#rightHand');
 
 
   // =========================
-  // GET ACTIVE MODEL
+  // GET CURRENT MODEL
   // =========================
 
   function getCurrentModel() {
@@ -414,30 +406,66 @@
 
   });
 
+// =========================
+// RIGHT THUMBSTICK SCALE
+// =========================
+
+rightHand.addEventListener('thumbstickmoved', function (event) {
+
+  const activeModel = getCurrentModel();
+
+  let currentScale = activeModel.object3D.scale.x;
+
+  // THUMBSTICK UP = BIGGER
+  if (event.detail.y < -0.5) {
+
+    currentScale += 0.01;
+
+  }
+
+  // THUMBSTICK DOWN = SMALLER
+  if (event.detail.y > 0.5) {
+
+    currentScale -= 0.01;
+
+  }
+
+  // PREVENT NEGATIVE SCALE
+  if (currentScale < 0.01) {
+
+    currentScale = 0.01;
+
+  }
+
+  activeModel.object3D.scale.set(
+    currentScale,
+    currentScale,
+    currentScale
+  );
+
+});
 
   // =========================
-  // DRAG MODEL
+  // MOVE MODEL
   // =========================
 
-  AFRAME.registerComponent('drag-model', {
+  setInterval(function () {
 
-    tick: function () {
+    if (!dragging) return;
 
-      if (!dragging) return;
+    const activeModel = getCurrentModel();
 
-      const activeModel = getCurrentModel();
+    const handPosition = leftHand.object3D.position;
 
-      const handPosition = leftHand.object3D.position;
+    activeModel.object3D.position.x = handPosition.x * 2;
 
-      activeModel.object3D.position.x = handPosition.x * 2;
+    activeModel.object3D.position.y = handPosition.y;
 
-      activeModel.object3D.position.y = handPosition.y;
+    activeModel.object3D.position.z = handPosition.z - 1;
 
-      activeModel.object3D.position.z = handPosition.z - 1;
+  }, 20);
 
-    }
-
-  });
+};
 
 </script>
 
