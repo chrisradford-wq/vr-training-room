@@ -19,8 +19,9 @@
 <body>
 
 <a-scene
-  cursor="rayOrigin: mouse"
-  physics="gravity: 0">
+  cursor="rayOrigin: mouse">
+
+ 
 
   <!-- SKY / BACKGROUND -->
   <a-sky color="#BBBBBB"></a-sky>
@@ -270,11 +271,7 @@
 
 <a-entity
   id="leftHand"
-
-  laser-controls="hand: left"
-
-  raycaster="objects: .clickable"
-  line="color: red">
+  laser-controls="hand: left">
 </a-entity>
 
 
@@ -282,14 +279,8 @@
 
 <a-entity
   id="rightHand"
-
-  laser-controls="hand: right"
-
-  raycaster="objects: .clickable"
-  line="color: blue">
+  laser-controls="hand: right">
 </a-entity>
-
-  </a-entity>
 
 
   <!-- ========================= -->
@@ -301,8 +292,6 @@
 window.onload = function () {
 
   let currentModel = 1;
-
-  let dragging = false;
 
   const model1 = document.querySelector('#model1');
   const model2 = document.querySelector('#model2');
@@ -385,26 +374,6 @@ window.onload = function () {
   });
 
 
-  // =========================
-  // START DRAGGING
-  // =========================
-
-  leftHand.addEventListener('triggerdown', function () {
-
-    dragging = true;
-
-  });
-
-
-  // =========================
-  // STOP DRAGGING
-  // =========================
-
-  leftHand.addEventListener('triggerup', function () {
-
-    dragging = false;
-
-  });
 
 // =========================
 // RIGHT THUMBSTICK SCALE
@@ -441,29 +410,72 @@ rightHand.addEventListener('thumbstickmoved', function (event) {
     currentScale,
     currentScale,
     currentScale
-  );
+  )});
+
+// =========================
+// LEFT THUMBSTICK MOVE
+// =========================
+
+leftHand.addEventListener('thumbstickmoved', function (event) {
+
+  const activeModel = getCurrentModel();
+
+  // LEFT / RIGHT
+  activeModel.object3D.position.x += event.detail.x * 0.03;
+
+  // FORWARD / BACK
+  activeModel.object3D.position.z += event.detail.y * 0.03;
 
 });
 
-  // =========================
-  // MOVE MODEL
-  // =========================
+// =========================
+// RIGHT THUMBSTICK ROTATE
+// =========================
 
-  setInterval(function () {
+rightHand.addEventListener('thumbstickmoved', function (event) {
 
-    if (!dragging) return;
+  const activeModel = getCurrentModel();
 
-    const activeModel = getCurrentModel();
+  activeModel.object3D.rotation.y -= event.detail.x * 0.05;
 
-    const handPosition = leftHand.object3D.position;
+  activeModel.object3D.rotation.x -= event.detail.y * 0.05;
 
-    activeModel.object3D.position.x = handPosition.x * 2;
+});
 
-    activeModel.object3D.position.y = handPosition.y;
+// =========================
+// RIGHT TRIGGER SCALE UP
+// =========================
 
-    activeModel.object3D.position.z = handPosition.z - 1;
+rightHand.addEventListener('triggerdown', function () {
 
-  }, 20);
+  const activeModel = getCurrentModel();
+
+  let scale = activeModel.object3D.scale.x;
+
+  scale += 0.02;
+
+  activeModel.object3D.scale.set(scale, scale, scale);
+
+});
+
+
+// =========================
+// RIGHT GRIP SCALE DOWN
+// =========================
+
+rightHand.addEventListener('gripdown', function () {
+
+  const activeModel = getCurrentModel();
+
+  let scale = activeModel.object3D.scale.x;
+
+  scale -= 0.02;
+
+  if (scale < 0.01) scale = 0.01;
+
+  activeModel.object3D.scale.set(scale, scale, scale);
+
+});
 
 };
 
