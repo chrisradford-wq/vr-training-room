@@ -1,488 +1,265 @@
 <!DOCTYPE html>
 <html>
-
+ 
 <head>
   <meta charset="utf-8">
   <title>VR Training Room</title>
-
+ 
   <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
-
   <script src="https://cdn.jsdelivr.net/npm/aframe-super-hands-component@3.0.5/dist/super-hands.min.js"></script>
-
   <script src="https://cdn.jsdelivr.net/npm/aframe-physics-system@4.2.2/dist/aframe-physics-system.min.js"></script>
-
   <script src="https://cdn.jsdelivr.net/npm/aframe-extras@7.2.0/dist/aframe-extras.min.js"></script>
-
   <script src="https://unpkg.com/aframe-event-set-component@5.0.0/dist/aframe-event-set-component.min.js"></script>
-
+ 
+  <script>
+  // =====================================================
+  // SINGLE-HAND GRAB + ROTATE COMPONENT
+  // Attach to a controller entity.
+  // When grip is held and the controller moves/rotates,
+  // the grabbed model follows position AND orientation.
+  // =====================================================
+ 
+  AFRAME.registerComponent('grab-rotate', {
+ 
+    init: function () {
+      this.grabbing      = false;
+      this.grabbedEl     = null;
+ 
+      // Reusable Three.js objects (avoid GC churn)
+      this.controllerWorldPos  = new THREE.Vector3();
+      this.controllerWorldQuat = new THREE.Quaternion();
+      this.controllerWorldScale= new THREE.Vector3();
+ 
+      this.prevControllerQuat  = new THREE.Quaternion();
+      this.deltaQuat           = new THREE.Quaternion();
+      this.modelWorldQuat      = new THREE.Quaternion();
+ 
+      this.prevControllerPos   = new THREE.Vector3();
+      this.deltaPos            = new THREE.Vector3();
+ 
+      this.el.addEventListener('gripdown', this.onGripDown.bind(this));
+      this.el.addEventListener('gripup',   this.onGripUp.bind(this));
+    },
+ 
+    onGripDown: function () {
+      // Find the nearest .grabbable within reach
+      const collider = this.el.components['sphere-collider'];
+      if (!collider || !collider.intersectedEls.length) return;
+ 
+      this.grabbedEl = collider.intersectedEls[0];
+      this.grabbing  = true;
+ 
+      // Snapshot current controller transform
+      this.el.object3D.matrixWorld.decompose(
+        this.prevControllerPos,
+        this.prevControllerQuat,
+        this.controllerWorldScale
+      );
+    },
+ 
+    onGripUp: function () {
+      this.grabbing  = false;
+      this.grabbedEl = null;
+    },
+ 
+    tick: function () {
+      if (!this.grabbing || !this.grabbedEl) return;
+ 
+      // Get current controller world transform
+      this.el.object3D.matrixWorld.decompose(
+        this.controllerWorldPos,
+        this.controllerWorldQuat,
+        this.controllerWorldScale
+      );
+ 
+      // --- POSITION: move model by same delta as controller ---
+      this.deltaPos.subVectors(
+        this.controllerWorldPos,
+        this.prevControllerPos
+      );
+      this.grabbedEl.object3D.position.add(this.deltaPos);
+ 
+      // --- ROTATION: apply controller rotation delta to model ---
+      // deltaQuat = currentQuat * inverse(prevQuat)
+      this.deltaQuat.copy(this.prevControllerQuat).invert();
+      this.deltaQuat.premultiply(this.controllerWorldQuat);
+ 
+      this.grabbedEl.object3D.quaternion.premultiply(this.deltaQuat);
+ 
+      // Store current as previous for next frame
+      this.prevControllerPos.copy(this.controllerWorldPos);
+      this.prevControllerQuat.copy(this.controllerWorldQuat);
+    }
+ 
+  });
+  </script>
+ 
 </head>
+ 
 <body>
-
-<a-scene
-  cursor="rayOrigin: mouse">
-
+<a-scene cursor="rayOrigin: mouse">
  
-
-  <!-- SKY / BACKGROUND -->
   <a-sky color="#BBBBBB"></a-sky>
-
-  <!-- FLOOR -->
-  <a-plane
-    position="0 0 0"
-    rotation="-90 0 0"
-    width="20"
-    height="20"
-    color="#999999">
-  </a-plane>
-
-  <!-- BACK WALL -->
-  <a-plane
-    position="0 5 -10"
-    width="20"
-    height="10"
-    color="#999999">
-  </a-plane>
-
-  <!-- LEFT WALL -->
-  <a-plane
-    position="-10 5 0"
-    rotation="0 90 0"
-    width="20"
-    height="10"
-    color="#555555">
-  </a-plane>
-
-  <!-- RIGHT WALL -->
-  <a-plane
-    position="10 5 0"
-    rotation="0 -90 0"
-    width="20"
-    height="10"
-    color="#555555">
-  </a-plane>
-
-  <!-- CEILING -->
-  <a-plane
-    position="0 10 0"
-    rotation="90 0 0"
-    width="20"
-    height="20"
-    color="#1">
-  </a-plane>
-  <!-- ========================= -->
-  <!-- DESK -->
-  <!-- ========================= -->
-
-  <!-- DESK TOP -->
-  <a-box
-    position="0 0.75 2"
-    width="2"
-    height="0.08"
-    depth="1"
-    color="#5A4A3A">
-  </a-box>
-
-  <!-- FRONT LEFT LEG -->
-  <a-box
-    position="-0.9 0.35 1.6"
-    width="0.08"
-    height="0.7"
-    depth="0.08"
-    color="#444444">
-  </a-box>
-
-  <!-- FRONT RIGHT LEG -->
-  <a-box
-    position="0.9 0.35 1.6"
-    width="0.08"
-    height="0.7"
-    depth="0.08"
-    color="#444444">
-  </a-box>
-
-  <!-- REAR LEFT LEG -->
-  <a-box
-    position="-0.9 0.35 2.4"
-    width="0.08"
-    height="0.7"
-    depth="0.08"
-    color="#444444">
-  </a-box>
-
-  <!-- REAR RIGHT LEG -->
-  <a-box
-    position="0.9 0.35 2.4"
-    width="0.08"
-    height="0.7"
-    depth="0.08"
-    color="#444444">
-  </a-box>
-  <!-- AMBIENT LIGHT -->
-  <a-light
-    type="ambient"
-    intensity="0.8">
-  </a-light>
-
-  <!-- MAIN DIRECTIONAL LIGHT -->
-  <a-light
-    type="directional"
-    intensity="1"
-    position="2 8 4">
-  </a-light>
-
  
-<a-image
-  src="assets/claas - white background.svg"
-  position="0 5 -9.9"
-  width="9"
-  height="7">
-</a-image>
-
-
-
-    <!-- ========================= -->
-  <!-- MODEL 1 -->
+  <!-- FLOOR -->
+  <a-plane position="0 0 0" rotation="-90 0 0" width="20" height="20" color="#999999"></a-plane>
+ 
+  <!-- BACK WALL -->
+  <a-plane position="0 5 -10" width="20" height="10" color="#999999"></a-plane>
+ 
+  <!-- LEFT WALL -->
+  <a-plane position="-10 5 0" rotation="0 90 0" width="20" height="10" color="#555555"></a-plane>
+ 
+  <!-- RIGHT WALL -->
+  <a-plane position="10 5 0" rotation="0 -90 0" width="20" height="10" color="#555555"></a-plane>
+ 
+  <!-- CEILING -->
+  <a-plane position="0 10 0" rotation="90 0 0" width="20" height="20" color="#1"></a-plane>
+ 
   <!-- ========================= -->
-
- <a-entity
-  id="model1"
-
-  class="clickable"
-
-  gltf-model="models/carburetor.glb"
-
-  position=".2 1.1 2.2"
-  rotation="0 45 0"
-  scale=".25 .25 .25"
-
-  event-set__enter="_event: mouseenter; scale: 0.27 0.27 0.27"
-  event-set__leave="_event: mouseleave; scale: 0.25 0.25 0.25"
-
-  visible="true">
-</a-entity>
-
-
+  <!-- DESK                      -->
   <!-- ========================= -->
-  <!-- MODEL 2 -->
+ 
+  <a-box position="0 0.75 2"      width="2"    height="0.08" depth="1"    color="#5A4A3A"></a-box>
+  <a-box position="-0.9 0.35 1.6" width="0.08" height="0.7"  depth="0.08" color="#444444"></a-box>
+  <a-box position="0.9 0.35 1.6"  width="0.08" height="0.7"  depth="0.08" color="#444444"></a-box>
+  <a-box position="-0.9 0.35 2.4" width="0.08" height="0.7"  depth="0.08" color="#444444"></a-box>
+  <a-box position="0.9 0.35 2.4"  width="0.08" height="0.7"  depth="0.08" color="#444444"></a-box>
+ 
+  <!-- LIGHTS -->
+  <a-light type="ambient"     intensity="0.8"></a-light>
+  <a-light type="directional" intensity="1" position="2 8 4"></a-light>
+ 
+  <a-image
+    src="assets/Red Landpower VR Training Academy.svg"
+    position="0 5 -9.9"
+    width="14"
+    height="6">
+  </a-image>
+ 
   <!-- ========================= -->
-
-<a-entity
-  id="model2"
-
-  class="clickable"
-
-  gltf-model="models/worm_drive.glb"
-
-  animation-mixer
-
-  position=".2 1.1 2.2"
-  rotation="0 0 0"
-  scale="0.007 0.007 0.007"
-
-  event-set__enter="_event: mouseenter; scale: 0.009 0.009 0.009"
-  event-set__leave="_event: mouseleave; scale: 0.007 0.007 0.007"
-
-  visible="false">
-</a-entity>
-
-<!-- ========================= -->
-  <!-- PREVIOUS BUTTON -->
+  <!-- MODEL 1                   -->
   <!-- ========================= -->
-
+ 
+  <a-entity
+    id="model1"
+    class="grabbable"
+    gltf-model="models/carburetor.glb"
+    position=".2 1.1 2.2"
+    rotation="0 45 0"
+    scale=".25 .25 .25"
+    visible="true">
+  </a-entity>
+ 
+  <!-- ========================= -->
+  <!-- MODEL 2                   -->
+  <!-- ========================= -->
+ 
+  <a-entity
+    id="model2"
+    class="grabbable"
+    gltf-model="models/worm_drive.glb"
+    animation-mixer
+    position=".2 1.1 2.2"
+    rotation="0 0 0"
+    scale="0.007 0.007 0.007"
+    visible="false">
+  </a-entity>
+ 
+  <!-- ========================= -->
+  <!-- PREVIOUS BUTTON           -->
+  <!-- ========================= -->
+ 
   <a-box
-  id="prevButton"
-
-  class="clickable"
-
-  position="-0.78 1 2.3"
-
-  width="0.3"
-  height="0.15"
-  depth="0.08"
-
-  color="#4444ff"
-
-  event-set__enter="_event: mouseenter; color: #6666ff"
-  event-set__leave="_event: mouseleave; color: #4444ff">
-</a-box>
-
-  <a-text
-    value="PREV"
-
-    position="-.93 1 2.35"
-
-    scale="0.5 0.5 0.5"
-
-    color="white">
-  </a-text>
-
-
-  <!-- ========================= -->
-  <!-- NEXT BUTTON -->
-  <!-- ========================= -->
-
-  <a-box
-    id="nextButton"
-
+    id="prevButton"
     class="clickable"
-
-    position="-.8 1.2 2.3"
-
+    position="-0.78 1 2.3"
     width="0.3"
     height="0.15"
     depth="0.08"
-
+    color="#4444ff"
+    event-set__enter="_event: mouseenter; color: #6666ff"
+    event-set__leave="_event: mouseleave; color: #4444ff">
+  </a-box>
+  <a-text value="PREV" position="-.93 1 2.35" scale="0.5 0.5 0.5" color="white"></a-text>
+ 
+  <!-- ========================= -->
+  <!-- NEXT BUTTON               -->
+  <!-- ========================= -->
+ 
+  <a-box
+    id="nextButton"
+    class="clickable"
+    position="-.8 1.2 2.3"
+    width="0.3"
+    height="0.15"
+    depth="0.08"
     color="#44aa44"
-
     event-set__enter="_event: mouseenter; color: #66cc66"
     event-set__leave="_event: mouseleave; color: #44aa44">
-</a-box>
-
-  <a-text
-    value="NEXT"
-
-    position="-.95 1.2 2.34"
-
-    scale="0.5 0.5 0.5"
-
-    color="white">
-  </a-text>
-
-
+  </a-box>
+  <a-text value="NEXT" position="-.95 1.2 2.34" scale="0.5 0.5 0.5" color="white"></a-text>
+ 
   <!-- ========================= -->
-  <!-- CAMERA / VR RIG -->
+  <!-- CAMERA / VR RIG           -->
   <!-- ========================= -->
-
+ 
   <a-entity id="rig" position="0 0 3">
-
-    <!-- CAMERA -->
+ 
     <a-camera position="0 1.2 0">
-
-       <a-cursor
-       rayOrigin="mouse"
-       fuse="false"
-       material="opacity: 0">
-       </a-cursor>
-
-</a-camera>
-    
-
-   <!-- LEFT CONTROLLER -->
-
-<a-entity
-  id="leftHand"
-  laser-controls="hand: left">
-</a-entity>
-
-
-<!-- RIGHT CONTROLLER -->
-
-<a-entity
-  id="rightHand"
-  laser-controls="hand: right">
-</a-entity>
-
-
+      <a-cursor rayOrigin="mouse" fuse="false" material="opacity: 0"></a-cursor>
+    </a-camera>
+ 
+    <!-- LEFT CONTROLLER -->
+    <a-entity
+      id="leftHand"
+      oculus-touch-controls="hand: left"
+      sphere-collider="objects: .grabbable; radius: 0.1"
+      grab-rotate>
+    </a-entity>
+ 
+    <!-- RIGHT CONTROLLER -->
+    <a-entity
+      id="rightHand"
+      oculus-touch-controls="hand: right"
+      sphere-collider="objects: .grabbable; radius: 0.1"
+      grab-rotate>
+    </a-entity>
+ 
+  </a-entity>
+ 
   <!-- ========================= -->
-  <!-- KEYBOARD MODEL SWITCHING -->
+  <!-- MODEL SWITCHING           -->
   <!-- ========================= -->
-
-<script>
-
-window.onload = function () {
-
-  let currentModel = 1;
-
-  const model1 = document.querySelector('#model1');
-  const model2 = document.querySelector('#model2');
-
-  const prevButton = document.querySelector('#prevButton');
-  const nextButton = document.querySelector('#nextButton');
-
-  const leftHand = document.querySelector('#leftHand');
-  const rightHand = document.querySelector('#rightHand');
-
-
-  // =========================
-  // GET CURRENT MODEL
-  // =========================
-
-  function getCurrentModel() {
-
-    if (currentModel === 1) {
-      return model1;
+ 
+  <script>
+  window.onload = function () {
+ 
+    let currentModel = 1;
+ 
+    const model1     = document.querySelector('#model1');
+    const model2     = document.querySelector('#model2');
+    const prevButton = document.querySelector('#prevButton');
+    const nextButton = document.querySelector('#nextButton');
+ 
+    function showModel(n) {
+      model1.setAttribute('visible', n === 1);
+      model2.setAttribute('visible', n === 2);
     }
-
-    if (currentModel === 2) {
-      return model2;
-    }
-
-  }
-
-
-  // =========================
-  // SHOW MODEL
-  // =========================
-
-  function showModel(modelNumber) {
-
-    model1.setAttribute('visible', false);
-    model2.setAttribute('visible', false);
-
-    if (modelNumber === 1) {
-      model1.setAttribute('visible', true);
-    }
-
-    if (modelNumber === 2) {
-      model2.setAttribute('visible', true);
-    }
-
-  }
-
-
-  // =========================
-  // NEXT BUTTON
-  // =========================
-
-  nextButton.addEventListener('mousedown', function () {
-
-    currentModel++;
-
-    if (currentModel > 2) {
-      currentModel = 1;
-    }
-
-    showModel(currentModel);
-
-  });
-
-
-  // =========================
-  // PREVIOUS BUTTON
-  // =========================
-
-  prevButton.addEventListener('mousedown', function () {
-
-    currentModel--;
-
-    if (currentModel < 1) {
-      currentModel = 2;
-    }
-
-    showModel(currentModel);
-
-  });
-
-
-
-// =========================
-// RIGHT THUMBSTICK SCALE
-// =========================
-
-rightHand.addEventListener('thumbstickmoved', function (event) {
-
-  const activeModel = getCurrentModel();
-
-  let currentScale = activeModel.object3D.scale.x;
-
-  // THUMBSTICK UP = BIGGER
-  if (event.detail.y < -0.5) {
-
-    currentScale += 0.01;
-
-  }
-
-  // THUMBSTICK DOWN = SMALLER
-  if (event.detail.y > 0.5) {
-
-    currentScale -= 0.01;
-
-  }
-
-  // PREVENT NEGATIVE SCALE
-  if (currentScale < 0.01) {
-
-    currentScale = 0.01;
-
-  }
-
-  activeModel.object3D.scale.set(
-    currentScale,
-    currentScale,
-    currentScale
-  )});
-
-// =========================
-// LEFT THUMBSTICK MOVE
-// =========================
-
-leftHand.addEventListener('thumbstickmoved', function (event) {
-
-  const activeModel = getCurrentModel();
-
-  // LEFT / RIGHT
-  activeModel.object3D.position.x += event.detail.x * 0.03;
-
-  // FORWARD / BACK
-  activeModel.object3D.position.z += event.detail.y * 0.03;
-
-});
-
-// =========================
-// RIGHT THUMBSTICK ROTATE
-// =========================
-
-rightHand.addEventListener('thumbstickmoved', function (event) {
-
-  const activeModel = getCurrentModel();
-
-  activeModel.object3D.rotation.y -= event.detail.x * 0.05;
-
-  activeModel.object3D.rotation.x -= event.detail.y * 0.05;
-
-});
-
-// =========================
-// RIGHT TRIGGER SCALE UP
-// =========================
-
-rightHand.addEventListener('triggerdown', function () {
-
-  const activeModel = getCurrentModel();
-
-  let scale = activeModel.object3D.scale.x;
-
-  scale += 0.02;
-
-  activeModel.object3D.scale.set(scale, scale, scale);
-
-});
-
-
-// =========================
-// RIGHT GRIP SCALE DOWN
-// =========================
-
-rightHand.addEventListener('gripdown', function () {
-
-  const activeModel = getCurrentModel();
-
-  let scale = activeModel.object3D.scale.x;
-
-  scale -= 0.02;
-
-  if (scale < 0.01) scale = 0.01;
-
-  activeModel.object3D.scale.set(scale, scale, scale);
-
-});
-
-};
-
-</script>
-
+ 
+    nextButton.addEventListener('mousedown', function () {
+      currentModel = currentModel >= 2 ? 1 : currentModel + 1;
+      showModel(currentModel);
+    });
+ 
+    prevButton.addEventListener('mousedown', function () {
+      currentModel = currentModel <= 1 ? 2 : currentModel - 1;
+      showModel(currentModel);
+    });
+ 
+  };
+  </script>
+ 
 </a-scene>
-
 </body>
-
 </html>
