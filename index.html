@@ -6,55 +6,74 @@
   <title>VR Training Room</title>
  
   <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/aframe-super-hands-component@3.0.5/dist/super-hands.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/aframe-physics-system@4.2.2/dist/aframe-physics-system.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/aframe-extras@7.2.0/dist/aframe-extras.min.js"></script>
   <script src="https://unpkg.com/aframe-event-set-component@5.0.0/dist/aframe-event-set-component.min.js"></script>
  
   <script>
   // =====================================================
-  // SINGLE-HAND GRAB + ROTATE COMPONENT
-  // Attach to a controller entity.
-  // When grip is held and the controller moves/rotates,
-  // the grabbed model follows position AND orientation.
+  // GRAB-ROTATE COMPONENT
+  // Attach to each controller entity.
+  // On gripdown: finds nearest .grabbable within reach,
+  // then every tick mirrors controller move + rotation
+  // onto the held model. No physics engine needed.
   // =====================================================
  
   AFRAME.registerComponent('grab-rotate', {
  
+    schema: {
+      grabDistance: { type: 'number', default: 0.3 }  // metres — tune if needed
+    },
+ 
     init: function () {
-      this.grabbing      = false;
-      this.grabbedEl     = null;
+      this.grabbing        = false;
+      this.grabbedEl       = null;
+      this.grabDistance    = this.data.grabDistance;
  
-      // Reusable Three.js objects (avoid GC churn)
-      this.controllerWorldPos  = new THREE.Vector3();
-      this.controllerWorldQuat = new THREE.Quaternion();
-      this.controllerWorldScale= new THREE.Vector3();
- 
-      this.prevControllerQuat  = new THREE.Quaternion();
-      this.deltaQuat           = new THREE.Quaternion();
-      this.modelWorldQuat      = new THREE.Quaternion();
- 
-      this.prevControllerPos   = new THREE.Vector3();
-      this.deltaPos            = new THREE.Vector3();
+      // Reusable Three.js objects
+      this.ctrlPos         = new THREE.Vector3();
+      this.ctrlQuat        = new THREE.Quaternion();
+      this.ctrlScale       = new THREE.Vector3();
+      this.prevCtrlPos     = new THREE.Vector3();
+      this.prevCtrlQuat    = new THREE.Quaternion();
+      this.deltaPos        = new THREE.Vector3();
+      this.deltaQuat       = new THREE.Quaternion();
+      this.modelPos        = new THREE.Vector3();
  
       this.el.addEventListener('gripdown', this.onGripDown.bind(this));
       this.el.addEventListener('gripup',   this.onGripUp.bind(this));
     },
  
     onGripDown: function () {
-      // Find the nearest .grabbable within reach
-      const collider = this.el.components['sphere-collider'];
-      if (!collider || !collider.intersectedEls.length) return;
+      // Get controller world position
+      this.el.object3D.matrixWorld.decompose(
+        this.ctrlPos, this.ctrlQuat, this.ctrlScale
+      );
  
-      this.grabbedEl = collider.intersectedEls[0];
+      // Find all .grabbable elements
+      const candidates = document.querySelectorAll('.grabbable');
+      let closest = null;
+      let closestDist = this.grabDistance;
+ 
+      candidates.forEach(el => {
+        if (!el.object3D.visible) return;
+        el.object3D.getWorldPosition(this.modelPos);
+        const dist = this.ctrlPos.distanceTo(this.modelPos);
+        if (dist < closestDist) {
+          closestDist = dist;
+          closest = el;
+        }
+      });
+ 
+      if (!closest) return;
+ 
+      this.grabbedEl = closest;
       this.grabbing  = true;
  
-      // Snapshot current controller transform
-      this.el.object3D.matrixWorld.decompose(
-        this.prevControllerPos,
-        this.prevControllerQuat,
-        this.controllerWorldScale
-      );
+      // Snapshot starting transform
+      this.prevCtrlPos.copy(this.ctrlPos);
+      this.prevCtrlQuat.copy(this.ctrlQuat);
+ 
+      console.log('Grabbed:', this.grabbedEl.id, 'dist:', closestDist.toFixed(3));
     },
  
     onGripUp: function () {
@@ -65,30 +84,22 @@
     tick: function () {
       if (!this.grabbing || !this.grabbedEl) return;
  
-      // Get current controller world transform
       this.el.object3D.matrixWorld.decompose(
-        this.controllerWorldPos,
-        this.controllerWorldQuat,
-        this.controllerWorldScale
+        this.ctrlPos, this.ctrlQuat, this.ctrlScale
       );
  
-      // --- POSITION: move model by same delta as controller ---
-      this.deltaPos.subVectors(
-        this.controllerWorldPos,
-        this.prevControllerPos
-      );
+      // Position delta
+      this.deltaPos.subVectors(this.ctrlPos, this.prevCtrlPos);
       this.grabbedEl.object3D.position.add(this.deltaPos);
  
-      // --- ROTATION: apply controller rotation delta to model ---
-      // deltaQuat = currentQuat * inverse(prevQuat)
-      this.deltaQuat.copy(this.prevControllerQuat).invert();
-      this.deltaQuat.premultiply(this.controllerWorldQuat);
- 
+      // Rotation delta
+      this.deltaQuat.copy(this.prevCtrlQuat).invert();
+      this.deltaQuat.premultiply(this.ctrlQuat);
       this.grabbedEl.object3D.quaternion.premultiply(this.deltaQuat);
  
-      // Store current as previous for next frame
-      this.prevControllerPos.copy(this.controllerWorldPos);
-      this.prevControllerQuat.copy(this.controllerWorldQuat);
+      // Store for next frame
+      this.prevCtrlPos.copy(this.ctrlPos);
+      this.prevCtrlQuat.copy(this.ctrlQuat);
     }
  
   });
@@ -210,20 +221,42 @@
       <a-cursor rayOrigin="mouse" fuse="false" material="opacity: 0"></a-cursor>
     </a-camera>
  
-    <!-- LEFT CONTROLLER -->
+    <!-- ========================= -->
+    <!-- LEFT CONTROLLER           -->
+    <!-- Laser ray + grab-rotate   -->
+    <!-- ========================= -->
+ 
     <a-entity
       id="leftHand"
       oculus-touch-controls="hand: left"
-      sphere-collider="objects: .grabbable; radius: 0.1"
       grab-rotate>
+ 
+      <!-- AIMING LASER -->
+      <a-entity
+        laser-controls="hand: left"
+        raycaster="objects: .grabbable, .clickable; far: 5; showLine: true"
+        line="color: #FF4444; opacity: 0.6">
+      </a-entity>
+ 
     </a-entity>
  
-    <!-- RIGHT CONTROLLER -->
+    <!-- ========================= -->
+    <!-- RIGHT CONTROLLER          -->
+    <!-- Laser ray + grab-rotate   -->
+    <!-- ========================= -->
+ 
     <a-entity
       id="rightHand"
       oculus-touch-controls="hand: right"
-      sphere-collider="objects: .grabbable; radius: 0.1"
       grab-rotate>
+ 
+      <!-- AIMING LASER -->
+      <a-entity
+        laser-controls="hand: right"
+        raycaster="objects: .grabbable, .clickable; far: 5; showLine: true"
+        line="color: #FF4444; opacity: 0.6">
+      </a-entity>
+ 
     </a-entity>
  
   </a-entity>
