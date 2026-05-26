@@ -12,9 +12,8 @@
   <script>
   // =====================================================
   // HAND GRAB COMPONENT
-  // Attach to a hand-tracking entity (left or right).
-  // Pinch (index finger + thumb) to grab the nearest
-  // .grabbable object. Move/rotate your hand to inspect.
+  // Pinch (index + thumb) to grab nearest .grabbable.
+  // Move and rotate hand to inspect the model.
   // =====================================================
  
   AFRAME.registerComponent('hand-grab', {
@@ -37,8 +36,6 @@
       this.deltaQuat    = new THREE.Quaternion();
       this.modelPos     = new THREE.Vector3();
  
-      // pinchstarted / pinchended are the hand-tracking
-      // equivalents of gripdown / gripup
       this.el.addEventListener('pinchstarted', this.onPinchStart.bind(this));
       this.el.addEventListener('pinchended',   this.onPinchEnd.bind(this));
     },
@@ -71,7 +68,6 @@
       this.prevCtrlPos.copy(this.ctrlPos);
       this.prevCtrlQuat.copy(this.ctrlQuat);
  
-      // Visual feedback — highlight the grabbed model
       this.grabbedEl.setAttribute('material', 'emissive: #334433');
     },
  
@@ -91,11 +87,9 @@
         this.ctrlPos, this.ctrlQuat, this.ctrlScale
       );
  
-      // Move
       this.deltaPos.subVectors(this.ctrlPos, this.prevCtrlPos);
       this.grabbedEl.object3D.position.add(this.deltaPos);
  
-      // Rotate
       this.deltaQuat.copy(this.prevCtrlQuat).invert();
       this.deltaQuat.premultiply(this.ctrlQuat);
       this.grabbedEl.object3D.quaternion.premultiply(this.deltaQuat);
@@ -110,40 +104,81 @@
 </head>
  
 <body>
+ 
 <a-scene
   cursor="rayOrigin: mouse"
-  webxr="optionalFeatures: hand-tracking">
+  webxr="optionalFeatures: hand-tracking"
+  renderer="colorManagement: true"
+  raycaster="objects: .clickable, .grabbable">
+ 
+  <!-- ========================= -->
+  <!-- ENVIRONMENT               -->
+  <!-- ========================= -->
  
   <a-sky color="#BBBBBB"></a-sky>
  
   <!-- FLOOR -->
-  <a-plane position="0 0 0" rotation="-90 0 0" width="20" height="20" color="#999999"></a-plane>
+  <a-plane
+    position="0 0 0"
+    rotation="-90 0 0"
+    width="20" height="20"
+    color="#999999">
+  </a-plane>
  
   <!-- BACK WALL -->
-  <a-plane position="0 5 -10" width="20" height="10" color="#999999"></a-plane>
+  <a-plane
+    position="0 5 -10"
+    width="20" height="10"
+    color="#999999">
+  </a-plane>
  
   <!-- LEFT WALL -->
-  <a-plane position="-10 5 0" rotation="0 90 0" width="20" height="10" color="#555555"></a-plane>
+  <a-plane
+    position="-10 5 0"
+    rotation="0 90 0"
+    width="20" height="10"
+    color="#555555">
+  </a-plane>
  
   <!-- RIGHT WALL -->
-  <a-plane position="10 5 0" rotation="0 -90 0" width="20" height="10" color="#555555"></a-plane>
+  <a-plane
+    position="10 5 0"
+    rotation="0 -90 0"
+    width="20" height="10"
+    color="#555555">
+  </a-plane>
  
   <!-- CEILING -->
-  <a-plane position="0 10 0" rotation="90 0 0" width="20" height="20" color="#1"></a-plane>
+  <a-plane
+    position="0 10 0"
+    rotation="90 0 0"
+    width="20" height="20"
+    color="#111111">
+  </a-plane>
  
   <!-- ========================= -->
   <!-- DESK                      -->
   <!-- ========================= -->
  
+  <!-- DESK TOP -->
   <a-box position="0 0.75 2"      width="2"    height="0.08" depth="1"    color="#5A4A3A"></a-box>
+ 
+  <!-- LEGS -->
   <a-box position="-0.9 0.35 1.6" width="0.08" height="0.7"  depth="0.08" color="#444444"></a-box>
   <a-box position="0.9 0.35 1.6"  width="0.08" height="0.7"  depth="0.08" color="#444444"></a-box>
   <a-box position="-0.9 0.35 2.4" width="0.08" height="0.7"  depth="0.08" color="#444444"></a-box>
   <a-box position="0.9 0.35 2.4"  width="0.08" height="0.7"  depth="0.08" color="#444444"></a-box>
  
-  <!-- LIGHTS -->
+  <!-- ========================= -->
+  <!-- LIGHTS                    -->
+  <!-- ========================= -->
+ 
   <a-light type="ambient"     intensity="0.8"></a-light>
   <a-light type="directional" intensity="1" position="2 8 4"></a-light>
+ 
+  <!-- ========================= -->
+  <!-- BANNER                    -->
+  <!-- ========================= -->
  
   <a-image
     src="assets/Red Landpower VR Training Academy.svg"
@@ -153,7 +188,7 @@
   </a-image>
  
   <!-- ========================= -->
-  <!-- MODEL 1                   -->
+  <!-- DESK MODEL 1 — CARBURETOR -->
   <!-- ========================= -->
  
   <a-entity
@@ -167,7 +202,7 @@
   </a-entity>
  
   <!-- ========================= -->
-  <!-- MODEL 2                   -->
+  <!-- DESK MODEL 2 — CLAAS      -->
   <!-- ========================= -->
  
   <a-entity
@@ -182,33 +217,25 @@
   </a-entity>
  
   <!-- ========================= -->
-  <!-- PREVIOUS BUTTON           -->
+  <!-- PREV / NEXT BUTTONS       -->
   <!-- ========================= -->
  
   <a-box
     id="prevButton"
     class="clickable"
     position="-0.78 1 2.3"
-    width="0.3"
-    height="0.15"
-    depth="0.08"
+    width="0.3" height="0.15" depth="0.08"
     color="#4444ff"
     event-set__enter="_event: mouseenter; color: #6666ff"
     event-set__leave="_event: mouseleave; color: #4444ff">
   </a-box>
   <a-text value="PREV" position="-.93 1 2.35" scale="0.5 0.5 0.5" color="white"></a-text>
  
-  <!-- ========================= -->
-  <!-- NEXT BUTTON               -->
-  <!-- ========================= -->
- 
   <a-box
     id="nextButton"
     class="clickable"
     position="-.8 1.2 2.3"
-    width="0.3"
-    height="0.15"
-    depth="0.08"
+    width="0.3" height="0.15" depth="0.08"
     color="#44aa44"
     event-set__enter="_event: mouseenter; color: #66cc66"
     event-set__leave="_event: mouseleave; color: #44aa44">
@@ -216,11 +243,8 @@
   <a-text value="NEXT" position="-.95 1.2 2.34" scale="0.5 0.5 0.5" color="white"></a-text>
  
   <!-- ========================= -->
-  <!-- BACKGROUND MODEL — FRONT LEFT CORNER -->
-  <!-- Position: left corner, visible from desk -->
-  <!-- Rotate inward so it faces the viewer    -->
-  <!-- Swap "models/tractor.glb" for your file -->
-  <!-- Adjust scale to fit your model's size   -->
+  <!-- BACKGROUND — RIGHT CORNER -->
+  <!-- CLAAS 630 tractor         -->
   <!-- ========================= -->
  
   <a-entity
@@ -231,7 +255,8 @@
   </a-entity>
  
   <!-- ========================= -->
-  <!-- BACKGROUND MODEL — FRONT RIGHT CORNER -->
+  <!-- BACKGROUND — LEFT CORNER  -->
+  <!-- Engine display model      -->
   <!-- ========================= -->
  
   <a-entity
@@ -251,23 +276,14 @@
       <a-cursor rayOrigin="mouse" fuse="false" material="opacity: 0"></a-cursor>
     </a-camera>
  
-    <!-- ========================= -->
-    <!-- LEFT HAND                 -->
-    <!-- hand-controls renders     -->
-    <!-- a visible hand model and  -->
-    <!-- fires pinchstarted etc.   -->
-    <!-- ========================= -->
- 
+    <!-- LEFT HAND -->
     <a-entity
       id="leftHand"
       hand-controls="hand: left; handModelStyle: lowPoly; color: #ffccaa"
       hand-grab>
     </a-entity>
  
-    <!-- ========================= -->
-    <!-- RIGHT HAND                -->
-    <!-- ========================= -->
- 
+    <!-- RIGHT HAND -->
     <a-entity
       id="rightHand"
       hand-controls="hand: right; handModelStyle: lowPoly; color: #ffccaa"
@@ -277,7 +293,7 @@
   </a-entity>
  
   <!-- ========================= -->
-  <!-- MODEL SWITCHING           -->
+  <!-- MODEL SWITCHING LOGIC     -->
   <!-- ========================= -->
  
   <script>
