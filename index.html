@@ -11,37 +11,122 @@
  
   <script>
   // =====================================================
-  // HAND VISUAL COMPONENT
-  // Draws a small sphere at each key fingertip so the
-  // user can see where their hands are in the scene.
-  // Uses raw WebXR joint data — no hand-controls needed.
+  // HAND RENDERER COMPONENT
+  // Draws a silhouette-style hand using WebXR joint
+  // positions. Each joint = a flat dark sphere.
+  // Bones between joints = thin cylinders.
+  // Pinching turns the index + thumb yellow.
   // =====================================================
  
-  AFRAME.registerComponent('hand-visual', {
+  AFRAME.registerComponent('hand-renderer', {
  
     schema: {
-      hand: { type: 'string', default: 'right' }
+      hand:      { type: 'string',  default: 'right' },
+      color:     { type: 'color',   default: '#1a1a1a' },
+      pinchDist: { type: 'number',  default: 0.04 },
+      grabDistance: { type: 'number', default: 0.30 }
     },
  
     init: function () {
+      this.grabbing    = false;
+      this.grabbedEl   = null;
+      this.wasPinching = false;
  
-      // Create small spheres for thumb, index, and wrist
-      const joints = ['thumb-tip', 'index-finger-tip', 'wrist',
-                      'middle-finger-tip', 'ring-finger-tip', 'pinky-finger-tip'];
+      this.thumbTip  = new THREE.Vector3();
+      this.indexTip  = new THREE.Vector3();
+      this.modelPos  = new THREE.Vector3();
+      this.prevPos   = new THREE.Vector3();
+      this.prevQuat  = new THREE.Quaternion();
+      this.curQuat   = new THREE.Quaternion();
+      this.deltaPos  = new THREE.Vector3();
+      this.deltaQuat = new THREE.Quaternion();
  
-      this.jointEls = {};
+      // All 25 WebXR hand joints
+      this.JOINTS = [
+        'wrist',
+        'thumb-metacarpal', 'thumb-phalanx-proximal',
+        'thumb-phalanx-distal', 'thumb-tip',
+        'index-finger-metacarpal', 'index-finger-phalanx-proximal',
+        'index-finger-phalanx-intermediate', 'index-finger-phalanx-distal',
+        'index-finger-tip',
+        'middle-finger-metacarpal', 'middle-finger-phalanx-proximal',
+        'middle-finger-phalanx-intermediate', 'middle-finger-phalanx-distal',
+        'middle-finger-tip',
+        'ring-finger-metacarpal', 'ring-finger-phalanx-proximal',
+        'ring-finger-phalanx-intermediate', 'ring-finger-phalanx-distal',
+        'ring-finger-tip',
+        'pinky-finger-metacarpal', 'pinky-finger-phalanx-proximal',
+        'pinky-finger-phalanx-intermediate', 'pinky-finger-phalanx-distal',
+        'pinky-finger-tip'
+      ];
  
-      joints.forEach(name => {
-        const dot = document.createElement('a-sphere');
-        dot.setAttribute('radius', name === 'wrist' ? 0.02 : 0.012);
-        dot.setAttribute('color',  name === 'thumb-tip' || name === 'index-finger-tip'
-          ? '#ffdd00' : '#ffccaa');
-        dot.setAttribute('material', 'shader: flat'); // no lighting on hand dots
-        this.el.sceneEl.appendChild(dot);
-        this.jointEls[name] = dot;
+      // Bone connections: pairs of joint names
+      this.BONES = [
+        ['wrist','thumb-metacarpal'],
+        ['thumb-metacarpal','thumb-phalanx-proximal'],
+        ['thumb-phalanx-proximal','thumb-phalanx-distal'],
+        ['thumb-phalanx-distal','thumb-tip'],
+        ['wrist','index-finger-metacarpal'],
+        ['index-finger-metacarpal','index-finger-phalanx-proximal'],
+        ['index-finger-phalanx-proximal','index-finger-phalanx-intermediate'],
+        ['index-finger-phalanx-intermediate','index-finger-phalanx-distal'],
+        ['index-finger-phalanx-distal','index-finger-tip'],
+        ['wrist','middle-finger-metacarpal'],
+        ['middle-finger-metacarpal','middle-finger-phalanx-proximal'],
+        ['middle-finger-phalanx-proximal','middle-finger-phalanx-intermediate'],
+        ['middle-finger-phalanx-intermediate','middle-finger-phalanx-distal'],
+        ['middle-finger-phalanx-distal','middle-finger-tip'],
+        ['wrist','ring-finger-metacarpal'],
+        ['ring-finger-metacarpal','ring-finger-phalanx-proximal'],
+        ['ring-finger-phalanx-proximal','ring-finger-phalanx-intermediate'],
+        ['ring-finger-phalanx-intermediate','ring-finger-phalanx-distal'],
+        ['ring-finger-phalanx-distal','ring-finger-tip'],
+        ['wrist','pinky-finger-metacarpal'],
+        ['pinky-finger-metacarpal','pinky-finger-phalanx-proximal'],
+        ['pinky-finger-phalanx-proximal','pinky-finger-phalanx-intermediate'],
+        ['pinky-finger-phalanx-intermediate','pinky-finger-phalanx-distal'],
+        ['pinky-finger-phalanx-distal','pinky-finger-tip'],
+        ['index-finger-metacarpal','middle-finger-metacarpal'],
+        ['middle-finger-metacarpal','ring-finger-metacarpal'],
+        ['ring-finger-metacarpal','pinky-finger-metacarpal']
+      ];
+ 
+      // Build joint spheres
+      this.jointMeshes = {};
+      this.JOINTS.forEach(name => {
+        const el = document.createElement('a-sphere');
+        const isPinchJoint = name === 'thumb-tip' || name === 'index-finger-tip';
+        el.setAttribute('radius', name === 'wrist' ? 0.013 : 0.007);
+        el.setAttribute('color', this.data.color);
+        el.setAttribute('material', 'shader: flat; depthTest: false');
+        el.setAttribute('visible', false);
+        this.el.sceneEl.appendChild(el);
+        this.jointMeshes[name] = el;
       });
  
-      this.pos = new THREE.Vector3();
+      // Build bone cylinders
+      this.boneMeshes = [];
+      this.BONES.forEach(() => {
+        const el = document.createElement('a-cylinder');
+        el.setAttribute('radius', 0.005);
+        el.setAttribute('color', this.data.color);
+        el.setAttribute('material', 'shader: flat; depthTest: false');
+        el.setAttribute('visible', false);
+        this.el.sceneEl.appendChild(el);
+        this.boneMeshes.push(el);
+      });
+ 
+      this.jointPositions = {};
+      this.JOINTS.forEach(n => {
+        this.jointPositions[n] = new THREE.Vector3();
+      });
+ 
+      this._boneStart = new THREE.Vector3();
+      this._boneEnd   = new THREE.Vector3();
+      this._boneMid   = new THREE.Vector3();
+      this._boneDir   = new THREE.Vector3();
+      this._up        = new THREE.Vector3(0, 1, 0);
+      this._quat      = new THREE.Quaternion();
     },
  
     tick: function () {
@@ -52,71 +137,8 @@
       if (!xrFrame || !xrSession) return;
  
       const refSpace = renderer.xr.getReferenceSpace();
+      let handInput  = null;
  
-      for (const src of xrSession.inputSources) {
-        if (!src.hand || src.handedness !== this.data.hand) continue;
- 
-        for (const [name, dotEl] of Object.entries(this.jointEls)) {
-          const joint = src.hand.get(name);
-          if (!joint) continue;
-          const pose = xrFrame.getJointPose(joint, refSpace);
-          if (!pose) continue;
- 
-          const p = pose.transform.position;
-          dotEl.object3D.position.set(p.x, p.y, p.z);
-          dotEl.setAttribute('visible', true);
-        }
-        return;
-      }
- 
-      // No hand found — hide dots
-      Object.values(this.jointEls).forEach(d => d.setAttribute('visible', false));
-    }
- 
-  });
- 
- 
-  // =====================================================
-  // WEBXR GRAB COMPONENT
-  // Reads index tip + thumb tip distance directly from
-  // WebXR API each frame. When pinching, grabs the
-  // nearest .grabbable within grabDistance metres of
-  // the INDEX FINGERTIP (most natural grab point).
-  // =====================================================
- 
-  AFRAME.registerComponent('webxr-grab', {
- 
-    schema: {
-      hand:         { type: 'string', default: 'right' },
-      pinchDist:    { type: 'number', default: 0.04  },
-      grabDistance: { type: 'number', default: 0.25  }
-    },
- 
-    init: function () {
-      this.grabbing      = false;
-      this.grabbedEl     = null;
-      this.wasPinching   = false;
- 
-      this.thumbTip      = new THREE.Vector3();
-      this.indexTip      = new THREE.Vector3();
-      this.modelPos      = new THREE.Vector3();
-      this.prevIndexPos  = new THREE.Vector3();
-      this.prevIndexQuat = new THREE.Quaternion();
-      this.indexQuat     = new THREE.Quaternion();
-      this.deltaPos      = new THREE.Vector3();
-      this.deltaQuat     = new THREE.Quaternion();
-    },
- 
-    tick: function () {
-      const renderer  = this.el.sceneEl.renderer;
-      const xrFrame   = renderer.xr.getFrame();
-      const xrSession = renderer.xr.getSession();
- 
-      if (!xrFrame || !xrSession) return;
- 
-      const refSpace = renderer.xr.getReferenceSpace();
- 
-      let handInput = null;
       for (const src of xrSession.inputSources) {
         if (src.hand && src.handedness === this.data.hand) {
           handInput = src;
@@ -124,50 +146,67 @@
         }
       }
  
-      if (!handInput) return;
+      if (!handInput) {
+        // Hide everything if hand not found
+        this.JOINTS.forEach(n => this.jointMeshes[n].setAttribute('visible', false));
+        this.boneMeshes.forEach(b => b.setAttribute('visible', false));
+        return;
+      }
  
-      const thumbJoint = handInput.hand.get('thumb-tip');
-      const indexJoint = handInput.hand.get('index-finger-tip');
+      // Read all joint positions
+      let allValid = true;
+      this.JOINTS.forEach(name => {
+        const joint = handInput.hand.get(name);
+        if (!joint) { allValid = false; return; }
+        const pose = xrFrame.getJointPose(joint, refSpace);
+        if (!pose)  { allValid = false; return; }
+        const p = pose.transform.position;
+        this.jointPositions[name].set(p.x, p.y, p.z);
+      });
  
-      if (!thumbJoint || !indexJoint) return;
+      if (!allValid) return;
  
-      const thumbPose = xrFrame.getJointPose(thumbJoint, refSpace);
-      const indexPose = xrFrame.getJointPose(indexJoint, refSpace);
+      // Update joint sphere positions
+      this.JOINTS.forEach(name => {
+        const el = this.jointMeshes[name];
+        const pos = this.jointPositions[name];
+        el.object3D.position.copy(pos);
+        el.setAttribute('visible', true);
+      });
  
-      if (!thumbPose || !indexPose) return;
+      // Update bone cylinders
+      this.BONES.forEach((pair, i) => {
+        const boneEl = this.boneMeshes[i];
+        const start  = this.jointPositions[pair[0]];
+        const end    = this.jointPositions[pair[1]];
  
-      this.thumbTip.set(
-        thumbPose.transform.position.x,
-        thumbPose.transform.position.y,
-        thumbPose.transform.position.z
-      );
+        this._boneMid.addVectors(start, end).multiplyScalar(0.5);
+        this._boneDir.subVectors(end, start);
+        const length = this._boneDir.length();
+        this._boneDir.normalize();
  
-      this.indexTip.set(
-        indexPose.transform.position.x,
-        indexPose.transform.position.y,
-        indexPose.transform.position.z
-      );
+        this._quat.setFromUnitVectors(this._up, this._boneDir);
  
-      this.indexQuat.set(
-        indexPose.transform.orientation.x,
-        indexPose.transform.orientation.y,
-        indexPose.transform.orientation.z,
-        indexPose.transform.orientation.w
-      );
+        boneEl.object3D.position.copy(this._boneMid);
+        boneEl.object3D.quaternion.copy(this._quat);
+        boneEl.setAttribute('height', length);
+        boneEl.setAttribute('visible', true);
+      });
  
-      // -------------------------------------------------
-      // Pinch detection
-      // -------------------------------------------------
+      // -----------------------------------------------
+      // Pinch detection + grab logic
+      // -----------------------------------------------
  
-      const pinchDist  = this.thumbTip.distanceTo(this.indexTip);
-      const isPinching = pinchDist < this.data.pinchDist;
+      const thumbPos = this.jointPositions['thumb-tip'];
+      const indexPos = this.jointPositions['index-finger-tip'];
+      const isPinching = thumbPos.distanceTo(indexPos) < this.data.pinchDist;
  
-      // -------------------------------------------------
-      // Pinch started — find nearest grabbable
-      // Uses INDEX TIP as the grab origin (feels natural)
-      // with a generous grabDistance
-      // -------------------------------------------------
+      // Highlight pinch joints yellow when pinching
+      const pinchColor = isPinching ? '#ffdd00' : this.data.color;
+      this.jointMeshes['thumb-tip'].setAttribute('color', pinchColor);
+      this.jointMeshes['index-finger-tip'].setAttribute('color', pinchColor);
  
+      // Grab nearest grabbable on pinch start
       if (isPinching && !this.wasPinching) {
  
         const candidates = document.querySelectorAll('.grabbable');
@@ -177,26 +216,31 @@
         candidates.forEach(el => {
           if (!el.object3D.visible) return;
           el.object3D.getWorldPosition(this.modelPos);
-          const dist = this.indexTip.distanceTo(this.modelPos);
+          const dist = indexPos.distanceTo(this.modelPos);
           if (dist < closestDist) {
             closestDist = dist;
-            closest     = el;
+            closest = el;
           }
         });
  
         if (closest) {
           this.grabbedEl = closest;
           this.grabbing  = true;
-          this.prevIndexPos.copy(this.indexTip);
-          this.prevIndexQuat.copy(this.indexQuat);
+          this.prevPos.copy(indexPos);
+ 
+          // Get index finger orientation for rotation
+          const indexJoint = handInput.hand.get('index-finger-tip');
+          const indexPose  = xrFrame.getJointPose(indexJoint, refSpace);
+          if (indexPose) {
+            const o = indexPose.transform.orientation;
+            this.prevQuat.set(o.x, o.y, o.z, o.w);
+          }
+ 
           this.grabbedEl.setAttribute('material', 'emissive: #223322');
         }
       }
  
-      // -------------------------------------------------
-      // Pinch ended — release
-      // -------------------------------------------------
- 
+      // Release on pinch end
       if (!isPinching && this.wasPinching && this.grabbedEl) {
         this.grabbedEl.setAttribute('material', 'emissive: #000000');
         this.grabbedEl = null;
@@ -205,23 +249,24 @@
  
       this.wasPinching = isPinching;
  
-      // -------------------------------------------------
-      // While grabbing — mirror index tip movement
-      // -------------------------------------------------
- 
+      // Move and rotate grabbed model
       if (this.grabbing && this.grabbedEl) {
-        this.deltaPos.subVectors(this.indexTip, this.prevIndexPos);
+        this.deltaPos.subVectors(indexPos, this.prevPos);
         this.grabbedEl.object3D.position.add(this.deltaPos);
+        this.prevPos.copy(indexPos);
  
-        this.deltaQuat.copy(this.prevIndexQuat).invert();
-        this.deltaQuat.premultiply(this.indexQuat);
-        this.grabbedEl.object3D.quaternion.premultiply(this.deltaQuat);
- 
-        this.prevIndexPos.copy(this.indexTip);
-        this.prevIndexQuat.copy(this.indexQuat);
+        const indexJoint = handInput.hand.get('index-finger-tip');
+        const indexPose  = xrFrame.getJointPose(indexJoint, refSpace);
+        if (indexPose) {
+          const o = indexPose.transform.orientation;
+          this.curQuat.set(o.x, o.y, o.z, o.w);
+          this.deltaQuat.copy(this.prevQuat).invert();
+          this.deltaQuat.premultiply(this.curQuat);
+          this.grabbedEl.object3D.quaternion.premultiply(this.deltaQuat);
+          this.prevQuat.copy(this.curQuat);
+        }
       }
     }
- 
   });
   </script>
  
@@ -290,13 +335,9 @@
     visible="false">
   </a-entity>
  
-  <!-- ========================= -->
-  <!-- PREV / NEXT BUTTONS       -->
-  <!-- ========================= -->
- 
+  <!-- PREV / NEXT BUTTONS -->
   <a-box
-    id="prevButton"
-    class="clickable"
+    id="prevButton" class="clickable"
     position="-0.78 1 2.3"
     width="0.3" height="0.15" depth="0.08"
     color="#4444ff"
@@ -306,8 +347,7 @@
   <a-text value="PREV" position="-.93 1 2.35" scale="0.5 0.5 0.5" color="white"></a-text>
  
   <a-box
-    id="nextButton"
-    class="clickable"
+    id="nextButton" class="clickable"
     position="-.8 1.2 2.3"
     width="0.3" height="0.15" depth="0.08"
     color="#44aa44"
@@ -316,20 +356,13 @@
   </a-box>
   <a-text value="NEXT" position="-.95 1.2 2.34" scale="0.5 0.5 0.5" color="white"></a-text>
  
-  <!-- ========================= -->
-  <!-- BACKGROUND — RIGHT CORNER -->
-  <!-- ========================= -->
- 
+  <!-- BACKGROUND MODELS -->
   <a-entity
     gltf-model="models/claas_630.glb"
     position="6 -0.7 -5"
     rotation="0 25 0"
     scale="0.012 0.012 0.012">
   </a-entity>
- 
-  <!-- ========================= -->
-  <!-- BACKGROUND — LEFT CORNER  -->
-  <!-- ========================= -->
  
   <a-entity
     gltf-model="models/engine.glb"
@@ -348,31 +381,25 @@
       <a-cursor rayOrigin="mouse" fuse="false" material="opacity: 0"></a-cursor>
     </a-camera>
  
-    <!-- LEFT HAND — visual dots + grab -->
+    <!-- LEFT HAND — dark silhouette + grab -->
     <a-entity
       id="leftHand"
-      hand-visual="hand: left"
-      webxr-grab="hand: left">
+      hand-renderer="hand: left; color: #1a1a1a">
     </a-entity>
  
-    <!-- RIGHT HAND — visual dots + grab -->
+    <!-- RIGHT HAND — dark silhouette + grab -->
     <a-entity
       id="rightHand"
-      hand-visual="hand: right"
-      webxr-grab="hand: right">
+      hand-renderer="hand: right; color: #1a1a1a">
     </a-entity>
  
   </a-entity>
  
-  <!-- ========================= -->
-  <!-- MODEL SWITCHING           -->
-  <!-- ========================= -->
- 
+  <!-- MODEL SWITCHING -->
   <script>
   window.onload = function () {
  
     let currentModel = 1;
- 
     const model1     = document.querySelector('#model1');
     const model2     = document.querySelector('#model2');
     const prevButton = document.querySelector('#prevButton');
