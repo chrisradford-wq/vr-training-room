@@ -11,24 +11,85 @@
  
   <script>
   // =====================================================
-  // DIRECT WEBXR HAND GRAB COMPONENT
-  //
-  // Instead of relying on A-Frame's pinch events
-  // (which are unreliable in the Quest browser),
-  // this reads hand joint positions directly from
-  // the WebXR Hand Tracking API every frame.
-  //
-  // Pinch is detected by measuring the real distance
-  // between the index fingertip and thumb tip joints.
-  // When they are close enough = pinch = grab.
+  // HAND VISUAL COMPONENT
+  // Draws a small sphere at each key fingertip so the
+  // user can see where their hands are in the scene.
+  // Uses raw WebXR joint data — no hand-controls needed.
+  // =====================================================
+ 
+  AFRAME.registerComponent('hand-visual', {
+ 
+    schema: {
+      hand: { type: 'string', default: 'right' }
+    },
+ 
+    init: function () {
+ 
+      // Create small spheres for thumb, index, and wrist
+      const joints = ['thumb-tip', 'index-finger-tip', 'wrist',
+                      'middle-finger-tip', 'ring-finger-tip', 'pinky-finger-tip'];
+ 
+      this.jointEls = {};
+ 
+      joints.forEach(name => {
+        const dot = document.createElement('a-sphere');
+        dot.setAttribute('radius', name === 'wrist' ? 0.02 : 0.012);
+        dot.setAttribute('color',  name === 'thumb-tip' || name === 'index-finger-tip'
+          ? '#ffdd00' : '#ffccaa');
+        dot.setAttribute('material', 'shader: flat'); // no lighting on hand dots
+        this.el.sceneEl.appendChild(dot);
+        this.jointEls[name] = dot;
+      });
+ 
+      this.pos = new THREE.Vector3();
+    },
+ 
+    tick: function () {
+      const renderer  = this.el.sceneEl.renderer;
+      const xrFrame   = renderer.xr.getFrame();
+      const xrSession = renderer.xr.getSession();
+ 
+      if (!xrFrame || !xrSession) return;
+ 
+      const refSpace = renderer.xr.getReferenceSpace();
+ 
+      for (const src of xrSession.inputSources) {
+        if (!src.hand || src.handedness !== this.data.hand) continue;
+ 
+        for (const [name, dotEl] of Object.entries(this.jointEls)) {
+          const joint = src.hand.get(name);
+          if (!joint) continue;
+          const pose = xrFrame.getJointPose(joint, refSpace);
+          if (!pose) continue;
+ 
+          const p = pose.transform.position;
+          dotEl.object3D.position.set(p.x, p.y, p.z);
+          dotEl.setAttribute('visible', true);
+        }
+        return;
+      }
+ 
+      // No hand found — hide dots
+      Object.values(this.jointEls).forEach(d => d.setAttribute('visible', false));
+    }
+ 
+  });
+ 
+ 
+  // =====================================================
+  // WEBXR GRAB COMPONENT
+  // Reads index tip + thumb tip distance directly from
+  // WebXR API each frame. When pinching, grabs the
+  // nearest .grabbable within grabDistance metres of
+  // the INDEX FINGERTIP (most natural grab point).
   // =====================================================
  
   AFRAME.registerComponent('webxr-grab', {
  
     schema: {
-      hand:         { type: 'string',  default: 'right' },
-      pinchDist:    { type: 'number',  default: 0.04  },  // metres between fingertips to count as pinch
-      grabDistance: { type: 'number',  default: 0.20  }   // metres from wrist to nearest grabbable
+      hand:         { type: 'string', default: 'right' },
+      pinchDist:    { type: 'number', default: 0.04  },
+      grabDistance: { type: 'number', default: 0.25  }
     },
  
     init: function () {
@@ -38,29 +99,23 @@
  
       this.thumbTip      = new THREE.Vector3();
       this.indexTip      = new THREE.Vector3();
-      this.wristPos      = new THREE.Vector3();
       this.modelPos      = new THREE.Vector3();
- 
-      this.prevWristPos  = new THREE.Vector3();
-      this.prevWristQuat = new THREE.Quaternion();
-      this.wristQuat     = new THREE.Quaternion();
+      this.prevIndexPos  = new THREE.Vector3();
+      this.prevIndexQuat = new THREE.Quaternion();
+      this.indexQuat     = new THREE.Quaternion();
       this.deltaPos      = new THREE.Vector3();
       this.deltaQuat     = new THREE.Quaternion();
-      this.wristScale    = new THREE.Vector3();
     },
  
-    // -------------------------------------------------
-    // Called every frame by A-Frame
-    // -------------------------------------------------
     tick: function () {
- 
       const renderer  = this.el.sceneEl.renderer;
       const xrFrame   = renderer.xr.getFrame();
       const xrSession = renderer.xr.getSession();
  
       if (!xrFrame || !xrSession) return;
  
-      // Find the correct input source for this hand
+      const refSpace = renderer.xr.getReferenceSpace();
+ 
       let handInput = null;
       for (const src of xrSession.inputSources) {
         if (src.hand && src.handedness === this.data.hand) {
@@ -69,27 +124,18 @@
         }
       }
  
-      if (!handInput || !handInput.hand) return;
- 
-      const refSpace = renderer.xr.getReferenceSpace();
- 
-      // -----------------------------------------------
-      // Read thumb tip and index tip joint positions
-      // -----------------------------------------------
+      if (!handInput) return;
  
       const thumbJoint = handInput.hand.get('thumb-tip');
       const indexJoint = handInput.hand.get('index-finger-tip');
-      const wristJoint = handInput.hand.get('wrist');
  
-      if (!thumbJoint || !indexJoint || !wristJoint) return;
+      if (!thumbJoint || !indexJoint) return;
  
       const thumbPose = xrFrame.getJointPose(thumbJoint, refSpace);
       const indexPose = xrFrame.getJointPose(indexJoint, refSpace);
-      const wristPose = xrFrame.getJointPose(wristJoint, refSpace);
  
-      if (!thumbPose || !indexPose || !wristPose) return;
+      if (!thumbPose || !indexPose) return;
  
-      // Copy positions into Three.js vectors
       this.thumbTip.set(
         thumbPose.transform.position.x,
         thumbPose.transform.position.y,
@@ -102,29 +148,25 @@
         indexPose.transform.position.z
       );
  
-      this.wristPos.set(
-        wristPose.transform.position.x,
-        wristPose.transform.position.y,
-        wristPose.transform.position.z
+      this.indexQuat.set(
+        indexPose.transform.orientation.x,
+        indexPose.transform.orientation.y,
+        indexPose.transform.orientation.z,
+        indexPose.transform.orientation.w
       );
  
-      this.wristQuat.set(
-        wristPose.transform.orientation.x,
-        wristPose.transform.orientation.y,
-        wristPose.transform.orientation.z,
-        wristPose.transform.orientation.w
-      );
- 
-      // -----------------------------------------------
-      // Detect pinch
-      // -----------------------------------------------
+      // -------------------------------------------------
+      // Pinch detection
+      // -------------------------------------------------
  
       const pinchDist  = this.thumbTip.distanceTo(this.indexTip);
       const isPinching = pinchDist < this.data.pinchDist;
  
-      // -----------------------------------------------
-      // Pinch just started — try to grab nearest model
-      // -----------------------------------------------
+      // -------------------------------------------------
+      // Pinch started — find nearest grabbable
+      // Uses INDEX TIP as the grab origin (feels natural)
+      // with a generous grabDistance
+      // -------------------------------------------------
  
       if (isPinching && !this.wasPinching) {
  
@@ -135,7 +177,7 @@
         candidates.forEach(el => {
           if (!el.object3D.visible) return;
           el.object3D.getWorldPosition(this.modelPos);
-          const dist = this.wristPos.distanceTo(this.modelPos);
+          const dist = this.indexTip.distanceTo(this.modelPos);
           if (dist < closestDist) {
             closestDist = dist;
             closest     = el;
@@ -145,16 +187,15 @@
         if (closest) {
           this.grabbedEl = closest;
           this.grabbing  = true;
-          this.prevWristPos.copy(this.wristPos);
-          this.prevWristQuat.copy(this.wristQuat);
-          // Subtle green tint so the user knows they have it
+          this.prevIndexPos.copy(this.indexTip);
+          this.prevIndexQuat.copy(this.indexQuat);
           this.grabbedEl.setAttribute('material', 'emissive: #223322');
         }
       }
  
-      // -----------------------------------------------
-      // Pinch just ended — release
-      // -----------------------------------------------
+      // -------------------------------------------------
+      // Pinch ended — release
+      // -------------------------------------------------
  
       if (!isPinching && this.wasPinching && this.grabbedEl) {
         this.grabbedEl.setAttribute('material', 'emissive: #000000');
@@ -164,21 +205,20 @@
  
       this.wasPinching = isPinching;
  
-      // -----------------------------------------------
-      // While grabbing — move and rotate model
-      // -----------------------------------------------
+      // -------------------------------------------------
+      // While grabbing — mirror index tip movement
+      // -------------------------------------------------
  
       if (this.grabbing && this.grabbedEl) {
- 
-        this.deltaPos.subVectors(this.wristPos, this.prevWristPos);
+        this.deltaPos.subVectors(this.indexTip, this.prevIndexPos);
         this.grabbedEl.object3D.position.add(this.deltaPos);
  
-        this.deltaQuat.copy(this.prevWristQuat).invert();
-        this.deltaQuat.premultiply(this.wristQuat);
+        this.deltaQuat.copy(this.prevIndexQuat).invert();
+        this.deltaQuat.premultiply(this.indexQuat);
         this.grabbedEl.object3D.quaternion.premultiply(this.deltaQuat);
  
-        this.prevWristPos.copy(this.wristPos);
-        this.prevWristQuat.copy(this.wristQuat);
+        this.prevIndexPos.copy(this.indexTip);
+        this.prevIndexQuat.copy(this.indexQuat);
       }
     }
  
@@ -195,39 +235,26 @@
   renderer="colorManagement: true"
   raycaster="objects: .clickable, .grabbable">
  
-  <!-- ========================= -->
-  <!-- ENVIRONMENT               -->
-  <!-- ========================= -->
- 
+  <!-- ENVIRONMENT -->
   <a-sky color="#BBBBBB"></a-sky>
- 
   <a-plane position="0 0 0"   rotation="-90 0 0" width="20" height="20" color="#999999"></a-plane>
   <a-plane position="0 5 -10"                    width="20" height="10" color="#999999"></a-plane>
   <a-plane position="-10 5 0" rotation="0 90 0"  width="20" height="10" color="#555555"></a-plane>
   <a-plane position="10 5 0"  rotation="0 -90 0" width="20" height="10" color="#555555"></a-plane>
   <a-plane position="0 10 0"  rotation="90 0 0"  width="20" height="20" color="#111111"></a-plane>
  
-  <!-- ========================= -->
-  <!-- DESK                      -->
-  <!-- ========================= -->
- 
+  <!-- DESK -->
   <a-box position="0 0.75 2"      width="2"    height="0.08" depth="1"    color="#5A4A3A"></a-box>
   <a-box position="-0.9 0.35 1.6" width="0.08" height="0.7"  depth="0.08" color="#444444"></a-box>
   <a-box position="0.9 0.35 1.6"  width="0.08" height="0.7"  depth="0.08" color="#444444"></a-box>
   <a-box position="-0.9 0.35 2.4" width="0.08" height="0.7"  depth="0.08" color="#444444"></a-box>
   <a-box position="0.9 0.35 2.4"  width="0.08" height="0.7"  depth="0.08" color="#444444"></a-box>
  
-  <!-- ========================= -->
-  <!-- LIGHTS                    -->
-  <!-- ========================= -->
- 
+  <!-- LIGHTS -->
   <a-light type="ambient"     intensity="0.8"></a-light>
   <a-light type="directional" intensity="1" position="2 8 4"></a-light>
  
-  <!-- ========================= -->
-  <!-- BANNER                    -->
-  <!-- ========================= -->
- 
+  <!-- BANNER -->
   <a-image
     src="assets/Red Landpower VR Training Academy.svg"
     position="0 5 -9.9"
@@ -321,17 +348,17 @@
       <a-cursor rayOrigin="mouse" fuse="false" material="opacity: 0"></a-cursor>
     </a-camera>
  
-    <!-- LEFT HAND -->
+    <!-- LEFT HAND — visual dots + grab -->
     <a-entity
       id="leftHand"
-      hand-controls="hand: left; handModelStyle: lowPoly; color: #ffccaa"
+      hand-visual="hand: left"
       webxr-grab="hand: left">
     </a-entity>
  
-    <!-- RIGHT HAND -->
+    <!-- RIGHT HAND — visual dots + grab -->
     <a-entity
       id="rightHand"
-      hand-controls="hand: right; handModelStyle: lowPoly; color: #ffccaa"
+      hand-visual="hand: right"
       webxr-grab="hand: right">
     </a-entity>
  
