@@ -153,7 +153,11 @@
         return;
       }
  
-      // Read all joint positions
+      // Get rig offset so we can convert world space → scene space
+      const rig = document.querySelector('#rig');
+      const rigPos = rig ? rig.object3D.position : new THREE.Vector3();
+ 
+      // Read all joint positions and subtract rig offset
       let allValid = true;
       this.JOINTS.forEach(name => {
         const joint = handInput.hand.get(name);
@@ -161,7 +165,11 @@
         const pose = xrFrame.getJointPose(joint, refSpace);
         if (!pose)  { allValid = false; return; }
         const p = pose.transform.position;
-        this.jointPositions[name].set(p.x, p.y, p.z);
+        this.jointPositions[name].set(
+          p.x + rigPos.x,
+          p.y + rigPos.y,
+          p.z + rigPos.z
+        );
       });
  
       if (!allValid) return;
