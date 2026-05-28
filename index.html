@@ -11,26 +11,25 @@
  
   <script>
   // =====================================================
-  // HAND RENDERER — Smooth silhouette style
+  // HAND RENDERER — Meta-style outline
   //
-  // Each finger segment is a tapered capsule (sphere +
-  // cylinder) drawn as a single smooth skin. No skeleton
-  // visible — just a clean organic hand outline like
-  // Quest 3's native hand tracking appearance.
+  // Each finger segment rendered as:
+  //   OUTER shell  — solid coloured, slightly larger
+  //   INNER cutout — writes to depth only, clears the
+  //                  centre so it looks transparent
   //
-  // One material per hand = minimal draw calls.
-  // depthTest: false = always visible, never clipped.
+  // Result: clean glowing outline, hollow centre.
   // =====================================================
  
   AFRAME.registerComponent('hand-renderer', {
  
     schema: {
       hand:         { type: 'string', default: 'right'   },
-      color:        { type: 'color',  default: '#222222'  },
+      color:        { type: 'color',  default: '#ffffff'  },
       pinchColor:   { type: 'color',  default: '#ffdd00'  },
       pinchDist:    { type: 'number', default: 0.04       },
       grabDistance: { type: 'number', default: 0.30       },
-      opacity:      { type: 'number', default: 0.85       }
+      outlineWidth: { type: 'number', default: 1.25       }  // how much bigger the outline shell is
     },
  
     init: function () {
@@ -45,7 +44,6 @@
       this.deltaPos    = new THREE.Vector3();
       this.deltaQuat   = new THREE.Quaternion();
  
-      // All joints we need
       this.JOINTS = [
         'wrist',
         'thumb-metacarpal','thumb-phalanx-proximal',
@@ -64,7 +62,6 @@
         'pinky-finger-tip'
       ];
  
-      // Finger chains — each segment gets a capsule
       this.FINGERS = [
         ['wrist','thumb-metacarpal','thumb-phalanx-proximal','thumb-phalanx-distal','thumb-tip'],
         ['wrist','index-finger-metacarpal','index-finger-phalanx-proximal','index-finger-phalanx-intermediate','index-finger-phalanx-distal','index-finger-tip'],
@@ -73,114 +70,115 @@
         ['wrist','pinky-finger-metacarpal','pinky-finger-phalanx-proximal','pinky-finger-phalanx-intermediate','pinky-finger-phalanx-distal','pinky-finger-tip']
       ];
  
-      // Radius per joint type — tapers toward fingertip
-      this.RADII = {
-        'wrist': 0.018,
-        'metacarpal': 0.010,
-        'proximal': 0.009,
-        'intermediate': 0.008,
-        'distal': 0.007,
-        'tip': 0.006,
-        'thumb-metacarpal': 0.011,
-        'thumb-phalanx-proximal': 0.010,
-        'thumb-phalanx-distal': 0.009,
-        'thumb-tip': 0.008
-      };
- 
       const getRadius = (name) => {
-        if (this.RADII[name]) return this.RADII[name];
-        if (name.includes('tip'))          return 0.006;
-        if (name.includes('distal'))       return 0.007;
-        if (name.includes('intermediate')) return 0.008;
-        if (name.includes('proximal'))     return 0.009;
-        if (name.includes('metacarpal'))   return 0.010;
+        if (name === 'wrist')                    return 0.018;
+        if (name.includes('thumb-metacarpal'))   return 0.011;
+        if (name.includes('thumb-phalanx-prox')) return 0.010;
+        if (name.includes('thumb-phalanx-dist')) return 0.009;
+        if (name.includes('thumb-tip'))          return 0.008;
+        if (name.includes('tip'))                return 0.006;
+        if (name.includes('distal'))             return 0.007;
+        if (name.includes('intermediate'))       return 0.008;
+        if (name.includes('proximal'))           return 0.009;
+        if (name.includes('metacarpal'))         return 0.010;
         return 0.009;
       };
       this.getRadius = getRadius;
  
-      // Single shared material per hand
-      const makeMat = (color, opacity) => {
-        const mat = new THREE.MeshPhongMaterial({
+      // -----------------------------------------------
+      // OUTER material — visible outline shell
+      // Renders back faces only so it peeks out around
+      // the inner cutout, creating the outline effect
+      // -----------------------------------------------
+      const makeOuterMat = (color) => {
+        const mat = new THREE.MeshBasicMaterial({
           color:       new THREE.Color(color),
-          shininess:   40,
-          transparent: opacity < 1,
-          opacity:     opacity
+          side:        THREE.BackSide,   // only back faces = outline
+          transparent: true,
+          opacity:     0.9,
+          depthTest:   false,
+          depthWrite:  false
         });
-        mat.depthTest   = false;
-        mat.depthWrite  = false;
         mat.needsUpdate = true;
         return mat;
       };
  
-      this.matSkin   = makeMat(this.data.color,      this.data.opacity);
-      this.matPinch  = makeMat(this.data.pinchColor, this.data.opacity);
+      // -----------------------------------------------
+      // INNER material — transparent cutout
+      // Invisible but writes to depth buffer so the
+      // outer shell only shows as a thin ring outline
+      // -----------------------------------------------
+      const makeInnerMat = () => {
+        const mat = new THREE.MeshBasicMaterial({
+          colorWrite:  false,   // invisible
+          depthTest:   false,
+          depthWrite:  false,
+          transparent: true,
+          opacity:     0
+        });
+        mat.needsUpdate = true;
+        return mat;
+      };
  
-      // Build capsule meshes for every segment between joints
-      // A capsule = sphere at each joint end + cylinder between
+      this.matOuter      = makeOuterMat(this.data.color);
+      this.matOuterPinch = makeOuterMat(this.data.pinchColor);
+      this.matInner      = makeInnerMat();
+ 
+      const scale = this.data.outlineWidth;
+ 
+      // Build segments
       this.segments = [];
  
-      // Palm pad — large sphere at wrist
-      const palmSphere = new THREE.Mesh(
-        new THREE.SphereGeometry(1, 12, 12),
-        this.matSkin
-      );
-      palmSphere.frustumCulled = false;
-      palmSphere.renderOrder   = 999;
-      this.el.sceneEl.object3D.add(palmSphere);
-      this.palmSphere = palmSphere;
+      const sphereGeo = new THREE.SphereGeometry(1, 10, 10);
+      const cylGeo    = new THREE.CylinderGeometry(1, 1, 1, 10);
  
-      // For each finger chain, build joint spheres + segment cylinders
+      const addPair = (geo, isPinchSeg) => {
+        // Outer shell
+        const outer = new THREE.Mesh(geo, isPinchSeg ? this.matOuterPinch : this.matOuter);
+        outer.frustumCulled = false;
+        outer.renderOrder   = 998;
+        outer.visible       = false;
+        this.el.sceneEl.object3D.add(outer);
+ 
+        // Inner cutout
+        const inner = new THREE.Mesh(geo, this.matInner);
+        inner.frustumCulled = false;
+        inner.renderOrder   = 997;
+        inner.visible       = false;
+        this.el.sceneEl.object3D.add(inner);
+ 
+        return { outer, inner };
+      };
+ 
+      // Palm
+      const palm = addPair(sphereGeo, false);
+      this.palmOuter = palm.outer;
+      this.palmInner = palm.inner;
+ 
+      // Finger segments
       this.FINGERS.forEach((chain, fingerIdx) => {
         for (let i = 0; i < chain.length - 1; i++) {
-          const nameA = chain[i];
-          const nameB = chain[i + 1];
- 
-          // Skip full palm segments (wrist to metacarpal) for non-thumb
-          // to avoid overfilling the palm
+          const nameA    = chain[i];
+          const nameB    = chain[i + 1];
           const isPalmSeg = nameA === 'wrist' && fingerIdx > 0;
+          const isPinchSeg = nameB === 'thumb-tip' || nameB === 'index-finger-tip';
  
           const rA = getRadius(nameA);
           const rB = getRadius(nameB);
  
-          // Sphere at joint A
-          const sA = new THREE.Mesh(
-            new THREE.SphereGeometry(1, 10, 10),
-            this.matSkin
-          );
-          sA.scale.setScalar(rA);
-          sA.frustumCulled = false;
-          sA.renderOrder   = 999;
-          sA.visible       = !isPalmSeg;
-          this.el.sceneEl.object3D.add(sA);
+          const sA  = addPair(sphereGeo, isPinchSeg);
+          const sB  = addPair(sphereGeo, isPinchSeg);
+          const cyl = addPair(cylGeo,    isPinchSeg);
  
-          // Sphere at joint B (tip cap)
-          const sB = new THREE.Mesh(
-            new THREE.SphereGeometry(1, 10, 10),
-            this.matSkin
-          );
-          sB.scale.setScalar(rB);
-          sB.frustumCulled = false;
-          sB.renderOrder   = 999;
-          sB.visible       = !isPalmSeg;
-          this.el.sceneEl.object3D.add(sB);
- 
-          // Cylinder connecting them
-          const cyl = new THREE.Mesh(
-            new THREE.CylinderGeometry(1, 1, 1, 10),
-            this.matSkin
-          );
-          cyl.frustumCulled = false;
-          cyl.renderOrder   = 999;
-          cyl.visible       = !isPalmSeg;
-          this.el.sceneEl.object3D.add(cyl);
- 
-          this.segments.push({ nameA, nameB, rA, rB, sA, sB, cyl, isPalmSeg,
-            isPinchSeg: (nameB === 'thumb-tip' || nameB === 'index-finger-tip')
+          this.segments.push({
+            nameA, nameB, rA, rB,
+            sA, sB, cyl,
+            isPalmSeg, isPinchSeg,
+            scale
           });
         }
       });
  
-      // Joint position cache
       this.jointPositions = {};
       this.JOINTS.forEach(n => { this.jointPositions[n] = new THREE.Vector3(); });
  
@@ -208,11 +206,9 @@
  
       if (!handInput) { this._hideAll(); return; }
  
-      // Rig offset
       const rig    = document.querySelector('#rig');
       const rigPos = rig ? rig.object3D.position : new THREE.Vector3();
  
-      // Read joint positions
       let allValid = true;
       this.JOINTS.forEach(name => {
         const joint = handInput.hand.get(name);
@@ -229,61 +225,87 @@
  
       if (!allValid) { this._hideAll(); return; }
  
-      // Palm sphere at wrist
+      // Palm
       const wristPos = this.jointPositions['wrist'];
-      this.palmSphere.position.copy(wristPos);
-      this.palmSphere.scale.setScalar(0.022);
-      this.palmSphere.visible = true;
+      const pr = 0.022;
+      const ps = this.data.outlineWidth;
+ 
+      this.palmOuter.position.copy(wristPos);
+      this.palmOuter.scale.setScalar(pr * ps);
+      this.palmOuter.visible = true;
+ 
+      this.palmInner.position.copy(wristPos);
+      this.palmInner.scale.setScalar(pr);
+      this.palmInner.visible = true;
  
       // Pinch detection
       const thumbPos   = this.jointPositions['thumb-tip'];
       const indexPos   = this.jointPositions['index-finger-tip'];
       const isPinching = thumbPos.distanceTo(indexPos) < this.data.pinchDist;
  
-      // Update each segment
+      // Update segments
       this.segments.forEach(seg => {
-        if (seg.isPalmSeg) return;
+        if (seg.isPalmSeg) {
+          seg.sA.outer.visible  = false; seg.sA.inner.visible  = false;
+          seg.sB.outer.visible  = false; seg.sB.inner.visible  = false;
+          seg.cyl.outer.visible = false; seg.cyl.inner.visible = false;
+          return;
+        }
  
         const posA = this.jointPositions[seg.nameA];
         const posB = this.jointPositions[seg.nameB];
+        const s    = seg.scale;
  
-        // Pick material — yellow for pinch segments when pinching
-        const mat = (isPinching && seg.isPinchSeg) ? this.matPinch : this.matSkin;
+        // Switch pinch segments to yellow when pinching
+        if (seg.isPinchSeg) {
+          const mat = isPinching ? this.matOuterPinch : this.matOuter;
+          seg.sA.outer.material  = mat;
+          seg.sB.outer.material  = mat;
+          seg.cyl.outer.material = mat;
+        }
  
-        // Joint sphere A
-        seg.sA.position.copy(posA);
-        seg.sA.scale.setScalar(seg.rA);
-        seg.sA.material = mat;
-        seg.sA.visible  = true;
+        // Sphere A
+        seg.sA.outer.position.copy(posA);
+        seg.sA.outer.scale.setScalar(seg.rA * s);
+        seg.sA.outer.visible = true;
+        seg.sA.inner.position.copy(posA);
+        seg.sA.inner.scale.setScalar(seg.rA);
+        seg.sA.inner.visible = true;
  
-        // Joint sphere B
-        seg.sB.position.copy(posB);
-        seg.sB.scale.setScalar(seg.rB);
-        seg.sB.material = mat;
-        seg.sB.visible  = true;
+        // Sphere B
+        seg.sB.outer.position.copy(posB);
+        seg.sB.outer.scale.setScalar(seg.rB * s);
+        seg.sB.outer.visible = true;
+        seg.sB.inner.position.copy(posB);
+        seg.sB.inner.scale.setScalar(seg.rB);
+        seg.sB.inner.visible = true;
  
-        // Cylinder between A and B
+        // Cylinder
         this._mid.addVectors(posA, posB).multiplyScalar(0.5);
         this._dir.subVectors(posB, posA);
         const length = this._dir.length();
  
-        if (length < 0.001) { seg.cyl.visible = false; return; }
+        if (length < 0.001) {
+          seg.cyl.outer.visible = false;
+          seg.cyl.inner.visible = false;
+          return;
+        }
  
         this._dir.normalize();
         this._quat.setFromUnitVectors(this._up, this._dir);
  
-        seg.cyl.position.copy(this._mid);
-        seg.cyl.quaternion.copy(this._quat);
-        // Taper: top radius = rB, bottom = rA
-        seg.cyl.scale.set(seg.rB, length, seg.rB);
-        seg.cyl.material = mat;
-        seg.cyl.visible  = true;
+        seg.cyl.outer.position.copy(this._mid);
+        seg.cyl.outer.quaternion.copy(this._quat);
+        seg.cyl.outer.scale.set(seg.rB * s, length, seg.rB * s);
+        seg.cyl.outer.visible = true;
+ 
+        seg.cyl.inner.position.copy(this._mid);
+        seg.cyl.inner.quaternion.copy(this._quat);
+        seg.cyl.inner.scale.set(seg.rB, length, seg.rB);
+        seg.cyl.inner.visible = true;
       });
  
-      // -----------------------------------------------
-      // Grab logic
-      // -----------------------------------------------
- 
+      // Grab on pinch start
       if (isPinching && !this.wasPinching) {
         const candidates = document.querySelectorAll('.grabbable');
         let closest     = null;
@@ -300,16 +322,17 @@
           this.grabbedEl = closest;
           this.grabbing  = true;
           this.prevPos.copy(indexPos);
-          const indexJoint = handInput.hand.get('index-finger-tip');
-          const indexPose  = xrFrame.getJointPose(indexJoint, refSpace);
-          if (indexPose) {
-            const o = indexPose.transform.orientation;
+          const ij = handInput.hand.get('index-finger-tip');
+          const ip = xrFrame.getJointPose(ij, refSpace);
+          if (ip) {
+            const o = ip.transform.orientation;
             this.prevQuat.set(o.x, o.y, o.z, o.w);
           }
           this.grabbedEl.setAttribute('material', 'emissive: #223322');
         }
       }
  
+      // Release
       if (!isPinching && this.wasPinching && this.grabbedEl) {
         this.grabbedEl.setAttribute('material', 'emissive: #000000');
         this.grabbedEl = null;
@@ -318,15 +341,16 @@
  
       this.wasPinching = isPinching;
  
+      // Move and rotate grabbed model
       if (this.grabbing && this.grabbedEl) {
         this.deltaPos.subVectors(indexPos, this.prevPos);
         this.grabbedEl.object3D.position.add(this.deltaPos);
         this.prevPos.copy(indexPos);
  
-        const indexJoint = handInput.hand.get('index-finger-tip');
-        const indexPose  = xrFrame.getJointPose(indexJoint, refSpace);
-        if (indexPose) {
-          const o = indexPose.transform.orientation;
+        const ij = handInput.hand.get('index-finger-tip');
+        const ip = xrFrame.getJointPose(ij, refSpace);
+        if (ip) {
+          const o = ip.transform.orientation;
           this.curQuat.set(o.x, o.y, o.z, o.w);
           this.deltaQuat.copy(this.prevQuat).invert();
           this.deltaQuat.premultiply(this.curQuat);
@@ -337,11 +361,12 @@
     },
  
     _hideAll: function () {
-      this.palmSphere.visible = false;
+      this.palmOuter.visible = false;
+      this.palmInner.visible = false;
       this.segments.forEach(s => {
-        s.sA.visible  = false;
-        s.sB.visible  = false;
-        s.cyl.visible = false;
+        s.sA.outer.visible  = false; s.sA.inner.visible  = false;
+        s.sB.outer.visible  = false; s.sB.inner.visible  = false;
+        s.cyl.outer.visible = false; s.cyl.inner.visible = false;
       });
     }
  
@@ -395,15 +420,15 @@
     visible="true">
   </a-entity>
  
-  <!-- DESK MODEL 2 — CLAAS -->
+  <!-- DESK MODEL 2 — motor_de_combustion -->
   <a-entity
     id="model2"
     class="grabbable"
-    gltf-model="models/CLAAS.glb"
+    gltf-model="models/motor_de_combustion.glb"
     animation-mixer
-    position=".2 1.1 2.2"
-    rotation="0 0 0"
-    scale="1 1 1"
+    position=".2 .8 2.2"
+    rotation="0 270 0"
+    scale=".0025 .0025 .0025"
     visible="false">
   </a-entity>
  
@@ -450,8 +475,8 @@
       <a-cursor rayOrigin="mouse" fuse="false" material="opacity: 0"></a-cursor>
     </a-camera>
  
-    <a-entity id="leftHand"  hand-renderer="hand: left;  color: #222222; opacity: 0.85"></a-entity>
-    <a-entity id="rightHand" hand-renderer="hand: right; color: #222222; opacity: 0.85"></a-entity>
+    <a-entity id="leftHand"  hand-renderer="hand: left;  color: #ffffff"></a-entity>
+    <a-entity id="rightHand" hand-renderer="hand: right; color: #ffffff"></a-entity>
  
   </a-entity>
  
