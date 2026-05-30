@@ -11,38 +11,36 @@
  
   <script>
   // =====================================================
-  // HAND RENDERER — Meta-style outline
-  //
-  // Each finger segment rendered as:
-  //   OUTER shell  — solid coloured, slightly larger
-  //   INNER cutout — writes to depth only, clears the
-  //                  centre so it looks transparent
-  //
-  // Result: clean glowing outline, hollow centre.
+  // HAND RENDERER — Outline silhouette style
+  // + Double-pinch to summon/dismiss wrist panel
+  // + Pinch model card to switch model
   // =====================================================
  
   AFRAME.registerComponent('hand-renderer', {
  
     schema: {
-      hand:         { type: 'string', default: 'right'   },
-      color:        { type: 'color',  default: '#ffffff'  },
-      pinchColor:   { type: 'color',  default: '#ffdd00'  },
-      pinchDist:    { type: 'number', default: 0.04       },
-      grabDistance: { type: 'number', default: 0.30       },
-      outlineWidth: { type: 'number', default: 1.25       }  // how much bigger the outline shell is
+      hand:         { type: 'string', default: 'right'  },
+      color:        { type: 'color',  default: '#ffffff' },
+      pinchColor:   { type: 'color',  default: '#ffdd00' },
+      pinchDist:    { type: 'number', default: 0.04      },
+      grabDistance: { type: 'number', default: 0.30      },
+      outlineWidth: { type: 'number', default: 1.25      }
     },
  
     init: function () {
+      this.grabbing      = false;
+      this.grabbedEl     = null;
+      this.wasPinching   = false;
+      this.modelPos      = new THREE.Vector3();
+      this.prevPos       = new THREE.Vector3();
+      this.prevQuat      = new THREE.Quaternion();
+      this.curQuat       = new THREE.Quaternion();
+      this.deltaPos      = new THREE.Vector3();
+      this.deltaQuat     = new THREE.Quaternion();
  
-      this.grabbing    = false;
-      this.grabbedEl   = null;
-      this.wasPinching = false;
-      this.modelPos    = new THREE.Vector3();
-      this.prevPos     = new THREE.Vector3();
-      this.prevQuat    = new THREE.Quaternion();
-      this.curQuat     = new THREE.Quaternion();
-      this.deltaPos    = new THREE.Vector3();
-      this.deltaQuat   = new THREE.Quaternion();
+      // Double-pinch detection
+      this.lastPinchTime  = 0;
+      this.doublePinchGap = 500; // ms between pinches
  
       this.JOINTS = [
         'wrist',
@@ -71,50 +69,40 @@
       ];
  
       const getRadius = (name) => {
-        if (name === 'wrist')                    return 0.018;
-        if (name.includes('thumb-metacarpal'))   return 0.011;
-        if (name.includes('thumb-phalanx-prox')) return 0.010;
-        if (name.includes('thumb-phalanx-dist')) return 0.009;
-        if (name.includes('thumb-tip'))          return 0.008;
-        if (name.includes('tip'))                return 0.006;
-        if (name.includes('distal'))             return 0.007;
-        if (name.includes('intermediate'))       return 0.008;
-        if (name.includes('proximal'))           return 0.009;
-        if (name.includes('metacarpal'))         return 0.010;
+        if (name === 'wrist')                      return 0.018;
+        if (name.includes('thumb-metacarpal'))     return 0.011;
+        if (name.includes('thumb-phalanx-prox'))   return 0.010;
+        if (name.includes('thumb-phalanx-dist'))   return 0.009;
+        if (name.includes('thumb-tip'))            return 0.008;
+        if (name.includes('tip'))                  return 0.006;
+        if (name.includes('distal'))               return 0.007;
+        if (name.includes('intermediate'))         return 0.008;
+        if (name.includes('proximal'))             return 0.009;
+        if (name.includes('metacarpal'))           return 0.010;
         return 0.009;
       };
       this.getRadius = getRadius;
  
-      // -----------------------------------------------
-      // OUTER material — visible outline shell
-      // Renders back faces only so it peeks out around
-      // the inner cutout, creating the outline effect
-      // -----------------------------------------------
       const makeOuterMat = (color) => {
         const mat = new THREE.MeshBasicMaterial({
-          color:       new THREE.Color(color),
-          side:        THREE.BackSide,   // only back faces = outline
+          color: new THREE.Color(color),
+          side: THREE.BackSide,
           transparent: true,
-          opacity:     0.9,
-          depthTest:   false,
-          depthWrite:  false
+          opacity: 0.9,
+          depthTest: false,
+          depthWrite: false
         });
         mat.needsUpdate = true;
         return mat;
       };
  
-      // -----------------------------------------------
-      // INNER material — transparent cutout
-      // Invisible but writes to depth buffer so the
-      // outer shell only shows as a thin ring outline
-      // -----------------------------------------------
       const makeInnerMat = () => {
         const mat = new THREE.MeshBasicMaterial({
-          colorWrite:  false,   // invisible
-          depthTest:   false,
-          depthWrite:  false,
+          colorWrite: false,
+          depthTest: false,
+          depthWrite: false,
           transparent: true,
-          opacity:     0
+          opacity: 0
         });
         mat.needsUpdate = true;
         return mat;
@@ -124,23 +112,17 @@
       this.matOuterPinch = makeOuterMat(this.data.pinchColor);
       this.matInner      = makeInnerMat();
  
-      const scale = this.data.outlineWidth;
- 
-      // Build segments
-      this.segments = [];
- 
       const sphereGeo = new THREE.SphereGeometry(1, 10, 10);
       const cylGeo    = new THREE.CylinderGeometry(1, 1, 1, 10);
+      const s         = this.data.outlineWidth;
  
       const addPair = (geo, isPinchSeg) => {
-        // Outer shell
         const outer = new THREE.Mesh(geo, isPinchSeg ? this.matOuterPinch : this.matOuter);
         outer.frustumCulled = false;
         outer.renderOrder   = 998;
         outer.visible       = false;
         this.el.sceneEl.object3D.add(outer);
  
-        // Inner cutout
         const inner = new THREE.Mesh(geo, this.matInner);
         inner.frustumCulled = false;
         inner.renderOrder   = 997;
@@ -150,32 +132,23 @@
         return { outer, inner };
       };
  
-      // Palm
-      const palm = addPair(sphereGeo, false);
-      this.palmOuter = palm.outer;
-      this.palmInner = palm.inner;
+      const palm      = addPair(sphereGeo, false);
+      this.palmOuter  = palm.outer;
+      this.palmInner  = palm.inner;
  
-      // Finger segments
+      this.segments = [];
       this.FINGERS.forEach((chain, fingerIdx) => {
         for (let i = 0; i < chain.length - 1; i++) {
-          const nameA    = chain[i];
-          const nameB    = chain[i + 1];
-          const isPalmSeg = nameA === 'wrist' && fingerIdx > 0;
+          const nameA      = chain[i];
+          const nameB      = chain[i + 1];
+          const isPalmSeg  = nameA === 'wrist' && fingerIdx > 0;
           const isPinchSeg = nameB === 'thumb-tip' || nameB === 'index-finger-tip';
- 
           const rA = getRadius(nameA);
           const rB = getRadius(nameB);
- 
           const sA  = addPair(sphereGeo, isPinchSeg);
           const sB  = addPair(sphereGeo, isPinchSeg);
           const cyl = addPair(cylGeo,    isPinchSeg);
- 
-          this.segments.push({
-            nameA, nameB, rA, rB,
-            sA, sB, cyl,
-            isPalmSeg, isPinchSeg,
-            scale
-          });
+          this.segments.push({ nameA, nameB, rA, rB, sA, sB, cyl, isPalmSeg, isPinchSeg, scale: s });
         }
       });
  
@@ -192,18 +165,13 @@
       const renderer  = this.el.sceneEl.renderer;
       const xrFrame   = renderer.xr.getFrame();
       const xrSession = renderer.xr.getSession();
- 
       if (!xrFrame || !xrSession) { this._hideAll(); return; }
  
       const refSpace = renderer.xr.getReferenceSpace();
       let handInput  = null;
- 
       for (const src of xrSession.inputSources) {
-        if (src.hand && src.handedness === this.data.hand) {
-          handInput = src; break;
-        }
+        if (src.hand && src.handedness === this.data.hand) { handInput = src; break; }
       }
- 
       if (!handInput) { this._hideAll(); return; }
  
       const rig    = document.querySelector('#rig');
@@ -216,160 +184,311 @@
         const pose = xrFrame.getJointPose(joint, refSpace);
         if (!pose)  { allValid = false; return; }
         const p = pose.transform.position;
-        this.jointPositions[name].set(
-          p.x + rigPos.x,
-          p.y + rigPos.y,
-          p.z + rigPos.z
-        );
+        this.jointPositions[name].set(p.x + rigPos.x, p.y + rigPos.y, p.z + rigPos.z);
       });
- 
       if (!allValid) { this._hideAll(); return; }
  
       // Palm
       const wristPos = this.jointPositions['wrist'];
-      const pr = 0.022;
       const ps = this.data.outlineWidth;
+      this.palmOuter.position.copy(wristPos); this.palmOuter.scale.setScalar(0.022 * ps); this.palmOuter.visible = true;
+      this.palmInner.position.copy(wristPos); this.palmInner.scale.setScalar(0.022);       this.palmInner.visible = true;
  
-      this.palmOuter.position.copy(wristPos);
-      this.palmOuter.scale.setScalar(pr * ps);
-      this.palmOuter.visible = true;
- 
-      this.palmInner.position.copy(wristPos);
-      this.palmInner.scale.setScalar(pr);
-      this.palmInner.visible = true;
- 
-      // Pinch detection
+      // Pinch
       const thumbPos   = this.jointPositions['thumb-tip'];
       const indexPos   = this.jointPositions['index-finger-tip'];
       const isPinching = thumbPos.distanceTo(indexPos) < this.data.pinchDist;
  
-      // Update segments
+      // Segments
       this.segments.forEach(seg => {
         if (seg.isPalmSeg) {
-          seg.sA.outer.visible  = false; seg.sA.inner.visible  = false;
-          seg.sB.outer.visible  = false; seg.sB.inner.visible  = false;
-          seg.cyl.outer.visible = false; seg.cyl.inner.visible = false;
+          seg.sA.outer.visible = seg.sA.inner.visible =
+          seg.sB.outer.visible = seg.sB.inner.visible =
+          seg.cyl.outer.visible = seg.cyl.inner.visible = false;
           return;
         }
- 
         const posA = this.jointPositions[seg.nameA];
         const posB = this.jointPositions[seg.nameB];
         const s    = seg.scale;
  
-        // Switch pinch segments to yellow when pinching
         if (seg.isPinchSeg) {
           const mat = isPinching ? this.matOuterPinch : this.matOuter;
-          seg.sA.outer.material  = mat;
-          seg.sB.outer.material  = mat;
-          seg.cyl.outer.material = mat;
+          seg.sA.outer.material = seg.sB.outer.material = seg.cyl.outer.material = mat;
         }
  
-        // Sphere A
-        seg.sA.outer.position.copy(posA);
-        seg.sA.outer.scale.setScalar(seg.rA * s);
-        seg.sA.outer.visible = true;
-        seg.sA.inner.position.copy(posA);
-        seg.sA.inner.scale.setScalar(seg.rA);
-        seg.sA.inner.visible = true;
+        seg.sA.outer.position.copy(posA); seg.sA.outer.scale.setScalar(seg.rA * s); seg.sA.outer.visible = true;
+        seg.sA.inner.position.copy(posA); seg.sA.inner.scale.setScalar(seg.rA);     seg.sA.inner.visible = true;
+        seg.sB.outer.position.copy(posB); seg.sB.outer.scale.setScalar(seg.rB * s); seg.sB.outer.visible = true;
+        seg.sB.inner.position.copy(posB); seg.sB.inner.scale.setScalar(seg.rB);     seg.sB.inner.visible = true;
  
-        // Sphere B
-        seg.sB.outer.position.copy(posB);
-        seg.sB.outer.scale.setScalar(seg.rB * s);
-        seg.sB.outer.visible = true;
-        seg.sB.inner.position.copy(posB);
-        seg.sB.inner.scale.setScalar(seg.rB);
-        seg.sB.inner.visible = true;
- 
-        // Cylinder
         this._mid.addVectors(posA, posB).multiplyScalar(0.5);
         this._dir.subVectors(posB, posA);
         const length = this._dir.length();
- 
-        if (length < 0.001) {
-          seg.cyl.outer.visible = false;
-          seg.cyl.inner.visible = false;
-          return;
-        }
- 
+        if (length < 0.001) { seg.cyl.outer.visible = seg.cyl.inner.visible = false; return; }
         this._dir.normalize();
         this._quat.setFromUnitVectors(this._up, this._dir);
  
-        seg.cyl.outer.position.copy(this._mid);
-        seg.cyl.outer.quaternion.copy(this._quat);
-        seg.cyl.outer.scale.set(seg.rB * s, length, seg.rB * s);
-        seg.cyl.outer.visible = true;
- 
-        seg.cyl.inner.position.copy(this._mid);
-        seg.cyl.inner.quaternion.copy(this._quat);
-        seg.cyl.inner.scale.set(seg.rB, length, seg.rB);
-        seg.cyl.inner.visible = true;
+        seg.cyl.outer.position.copy(this._mid); seg.cyl.outer.quaternion.copy(this._quat); seg.cyl.outer.scale.set(seg.rB * s, length, seg.rB * s); seg.cyl.outer.visible = true;
+        seg.cyl.inner.position.copy(this._mid); seg.cyl.inner.quaternion.copy(this._quat); seg.cyl.inner.scale.set(seg.rB, length, seg.rB);         seg.cyl.inner.visible = true;
       });
  
-      // Grab on pinch start
-      if (isPinching && !this.wasPinching) {
-        const candidates = document.querySelectorAll('.grabbable');
-        let closest     = null;
-        let closestDist = this.data.grabDistance;
+      // -----------------------------------------------
+      // Double pinch detection (right hand only)
+      // -----------------------------------------------
+      if (this.data.hand === 'right') {
+        if (isPinching && !this.wasPinching) {
+          const now  = Date.now();
+          const gap  = now - this.lastPinchTime;
+          if (gap < this.doublePinchGap && gap > 100) {
+            // Double pinch — toggle wrist panel
+            const panel = document.querySelector('#wristPanel');
+            if (panel) panel.components['wrist-panel'].toggle();
+          }
+          this.lastPinchTime = now;
+        }
+      }
  
-        candidates.forEach(el => {
-          if (!el.object3D.visible) return;
-          el.object3D.getWorldPosition(this.modelPos);
-          const dist = indexPos.distanceTo(this.modelPos);
-          if (dist < closestDist) { closestDist = dist; closest = el; }
-        });
+      // -----------------------------------------------
+      // Grab logic (right hand — single pinch)
+      // -----------------------------------------------
+      if (this.data.hand === 'right') {
+        if (isPinching && !this.wasPinching) {
  
-        if (closest) {
-          this.grabbedEl = closest;
-          this.grabbing  = true;
+          // Check for panel card pinch first
+          const panel = document.querySelector('#wristPanel');
+          if (panel && panel.components['wrist-panel'] &&
+              panel.components['wrist-panel'].isVisible()) {
+            panel.components['wrist-panel'].trySelect(indexPos);
+          } else {
+            // Grab model
+            const candidates = document.querySelectorAll('.grabbable');
+            let closest     = null;
+            let closestDist = this.data.grabDistance;
+            candidates.forEach(el => {
+              if (!el.object3D.visible) return;
+              el.object3D.getWorldPosition(this.modelPos);
+              const dist = indexPos.distanceTo(this.modelPos);
+              if (dist < closestDist) { closestDist = dist; closest = el; }
+            });
+            if (closest) {
+              this.grabbedEl = closest;
+              this.grabbing  = true;
+              this.prevPos.copy(indexPos);
+              const ij = handInput.hand.get('index-finger-tip');
+              const ip = xrFrame.getJointPose(ij, refSpace);
+              if (ip) { const o = ip.transform.orientation; this.prevQuat.set(o.x, o.y, o.z, o.w); }
+              this.grabbedEl.setAttribute('material', 'emissive: #223322');
+            }
+          }
+        }
+ 
+        if (!isPinching && this.wasPinching && this.grabbedEl) {
+          this.grabbedEl.setAttribute('material', 'emissive: #000000');
+          this.grabbedEl = null;
+          this.grabbing  = false;
+        }
+ 
+        if (this.grabbing && this.grabbedEl) {
+          this.deltaPos.subVectors(indexPos, this.prevPos);
+          this.grabbedEl.object3D.position.add(this.deltaPos);
           this.prevPos.copy(indexPos);
           const ij = handInput.hand.get('index-finger-tip');
           const ip = xrFrame.getJointPose(ij, refSpace);
           if (ip) {
             const o = ip.transform.orientation;
-            this.prevQuat.set(o.x, o.y, o.z, o.w);
+            this.curQuat.set(o.x, o.y, o.z, o.w);
+            this.deltaQuat.copy(this.prevQuat).invert();
+            this.deltaQuat.premultiply(this.curQuat);
+            this.grabbedEl.object3D.quaternion.premultiply(this.deltaQuat);
+            this.prevQuat.copy(this.curQuat);
           }
-          this.grabbedEl.setAttribute('material', 'emissive: #223322');
         }
-      }
- 
-      // Release
-      if (!isPinching && this.wasPinching && this.grabbedEl) {
-        this.grabbedEl.setAttribute('material', 'emissive: #000000');
-        this.grabbedEl = null;
-        this.grabbing  = false;
       }
  
       this.wasPinching = isPinching;
- 
-      // Move and rotate grabbed model
-      if (this.grabbing && this.grabbedEl) {
-        this.deltaPos.subVectors(indexPos, this.prevPos);
-        this.grabbedEl.object3D.position.add(this.deltaPos);
-        this.prevPos.copy(indexPos);
- 
-        const ij = handInput.hand.get('index-finger-tip');
-        const ip = xrFrame.getJointPose(ij, refSpace);
-        if (ip) {
-          const o = ip.transform.orientation;
-          this.curQuat.set(o.x, o.y, o.z, o.w);
-          this.deltaQuat.copy(this.prevQuat).invert();
-          this.deltaQuat.premultiply(this.curQuat);
-          this.grabbedEl.object3D.quaternion.premultiply(this.deltaQuat);
-          this.prevQuat.copy(this.curQuat);
-        }
-      }
     },
  
     _hideAll: function () {
-      this.palmOuter.visible = false;
-      this.palmInner.visible = false;
+      this.palmOuter.visible = this.palmInner.visible = false;
       this.segments.forEach(s => {
-        s.sA.outer.visible  = false; s.sA.inner.visible  = false;
-        s.sB.outer.visible  = false; s.sB.inner.visible  = false;
-        s.cyl.outer.visible = false; s.cyl.inner.visible = false;
+        s.sA.outer.visible = s.sA.inner.visible =
+        s.sB.outer.visible = s.sB.inner.visible =
+        s.cyl.outer.visible = s.cyl.inner.visible = false;
       });
     }
+  });
  
+ 
+  // =====================================================
+  // WRIST PANEL COMPONENT
+  // Attaches to a dummy entity, follows left wrist
+  // joint each frame. Shows model cards as A-Frame
+  // plane + text entities. Pinch a card to select.
+  // =====================================================
+ 
+  AFRAME.registerComponent('wrist-panel', {
+ 
+    init: function () {
+      this.visible       = false;
+      this.wristPos      = new THREE.Vector3();
+      this.wristQuat     = new THREE.Quaternion();
+      this.cardPos       = new THREE.Vector3();
+ 
+      // Model list — names match your GLB filenames
+      this.models = [
+        { id: 'model1', name: 'Carburetor',  file: 'carburetor.glb'  },
+        { id: 'model2', name: 'CLAAS',       file: 'CLAAS.glb'       }
+      ];
+ 
+      this.currentModel = 0;
+ 
+      // Build panel root — positioned above wrist
+      this.panel = document.createElement('a-entity');
+      this.panel.setAttribute('visible', false);
+      this.el.sceneEl.appendChild(this.panel);
+ 
+      // Panel background
+      const bg = document.createElement('a-plane');
+      bg.setAttribute('width',   0.35);
+      bg.setAttribute('height',  this.models.length * 0.12 + 0.06);
+      bg.setAttribute('color',   '#111111');
+      bg.setAttribute('opacity', '0.85');
+      bg.setAttribute('position', '0 0 0');
+      this.panel.appendChild(bg);
+ 
+      // Title
+      const title = document.createElement('a-text');
+      title.setAttribute('value',    'SELECT MODEL');
+      title.setAttribute('position', `0 ${(this.models.length * 0.12) / 2 + 0.01} 0.01`);
+      title.setAttribute('align',    'center');
+      title.setAttribute('color',    '#aaaaaa');
+      title.setAttribute('scale',    '0.18 0.18 0.18');
+      this.panel.appendChild(title);
+ 
+      // Model cards
+      this.cards = [];
+      this.models.forEach((model, i) => {
+        const yPos = (this.models.length / 2 - i - 0.5) * 0.12;
+ 
+        // Card background
+        const card = document.createElement('a-plane');
+        card.setAttribute('width',    0.30);
+        card.setAttribute('height',   0.09);
+        card.setAttribute('color',    '#333333');
+        card.setAttribute('position', `0 ${yPos} 0.005`);
+        card.setAttribute('class',    'panelCard');
+        card.dataset.modelIndex = i;
+        this.panel.appendChild(card);
+ 
+        // Model name
+        const label = document.createElement('a-text');
+        label.setAttribute('value',    model.name);
+        label.setAttribute('position', `0 ${yPos + 0.015} 0.01`);
+        label.setAttribute('align',    'center');
+        label.setAttribute('color',    '#ffffff');
+        label.setAttribute('scale',    '0.22 0.22 0.22');
+        this.panel.appendChild(label);
+ 
+        // File name subtitle
+        const sub = document.createElement('a-text');
+        sub.setAttribute('value',    model.file);
+        sub.setAttribute('position', `0 ${yPos - 0.018} 0.01`);
+        sub.setAttribute('align',    'center');
+        sub.setAttribute('color',    '#888888');
+        sub.setAttribute('scale',    '0.14 0.14 0.14');
+        this.panel.appendChild(sub);
+ 
+        this.cards.push(card);
+      });
+ 
+      // Highlight current model card
+      this._highlightCurrent();
+    },
+ 
+    toggle: function () {
+      this.visible = !this.visible;
+      this.panel.setAttribute('visible', this.visible);
+    },
+ 
+    isVisible: function () {
+      return this.visible;
+    },
+ 
+    // Called by hand-renderer when pinching while panel is open
+    trySelect: function (indexPos) {
+      let closest   = null;
+      let closestD  = 0.25; // pinch must be within 25cm of a card
+ 
+      this.cards.forEach((card, i) => {
+        const wp = new THREE.Vector3();
+        card.object3D.getWorldPosition(wp);
+        const dist = indexPos.distanceTo(wp);
+        if (dist < closestD) { closestD = dist; closest = i; }
+      });
+ 
+      if (closest !== null) {
+        this.currentModel = closest;
+        this._showModel(closest);
+        this._highlightCurrent();
+        // Auto-dismiss panel after selection
+        this.visible = false;
+        this.panel.setAttribute('visible', false);
+      }
+    },
+ 
+    _showModel: function (index) {
+      this.models.forEach((m, i) => {
+        const el = document.querySelector('#' + m.id);
+        if (el) el.setAttribute('visible', i === index);
+      });
+    },
+ 
+    _highlightCurrent: function () {
+      this.cards.forEach((card, i) => {
+        card.setAttribute('color', i === this.currentModel ? '#1a472a' : '#333333');
+      });
+    },
+ 
+    tick: function () {
+      if (!this.visible) return;
+ 
+      // Follow left wrist joint
+      const renderer  = this.el.sceneEl.renderer;
+      const xrFrame   = renderer.xr.getFrame();
+      const xrSession = renderer.xr.getSession();
+      if (!xrFrame || !xrSession) return;
+ 
+      const refSpace = renderer.xr.getReferenceSpace();
+      for (const src of xrSession.inputSources) {
+        if (!src.hand || src.handedness !== 'left') continue;
+ 
+        const wristJoint = src.hand.get('wrist');
+        if (!wristJoint) return;
+        const pose = xrFrame.getJointPose(wristJoint, refSpace);
+        if (!pose) return;
+ 
+        const rig    = document.querySelector('#rig');
+        const rigPos = rig ? rig.object3D.position : new THREE.Vector3();
+ 
+        const p = pose.transform.position;
+        const o = pose.transform.orientation;
+ 
+        // Position panel above wrist
+        this.panel.object3D.position.set(
+          p.x + rigPos.x,
+          p.y + rigPos.y + 0.12,  // 12cm above wrist
+          p.z + rigPos.z
+        );
+ 
+        // Face the panel toward the camera
+        const cam = document.querySelector('a-camera');
+        if (cam) {
+          const camPos = new THREE.Vector3();
+          cam.object3D.getWorldPosition(camPos);
+          this.panel.object3D.lookAt(camPos);
+        }
+      }
+    }
   });
   </script>
  
@@ -381,7 +500,7 @@
   cursor="rayOrigin: mouse"
   webxr="optionalFeatures: hand-tracking"
   renderer="colorManagement: true"
-  raycaster="objects: .clickable, .grabbable">
+  raycaster="objects: .clickable, .grabbable, .panelCard">
  
   <!-- ENVIRONMENT -->
   <a-sky color="#BBBBBB"></a-sky>
@@ -405,7 +524,7 @@
   <!-- BANNER -->
   <a-image
     src="assets/Red Landpower VR Training Academy.svg"
-    position="0 5 -9.9"
+    position="0 6.9 -9.9"
     width="14" height="6">
   </a-image>
  
@@ -414,50 +533,29 @@
     id="model1"
     class="grabbable"
     gltf-model="models/carburetor.glb"
-    position=".2 1.1 2.2"
+    position="-0.2 1.1 2.2"
     rotation="0 45 0"
     scale=".25 .25 .25"
     visible="true">
   </a-entity>
  
-  <!-- DESK MODEL 2 — motor_de_combustion -->
+  <!-- DESK MODEL 2 — CLAAS -->
   <a-entity
     id="model2"
     class="grabbable"
-    gltf-model="models/motor_de_combustion.glb"
+    gltf-model="models/CLAAS.glb"
     animation-mixer
-    position=".2 .8 2.2"
-    rotation="0 270 0"
-    scale=".0025 .0025 .0025"
+    position="-0.2 1.1 2.2"
+    rotation="0 0 0"
+    scale="1 1 1"
     visible="false">
   </a-entity>
- 
-  <!-- PREV / NEXT BUTTONS -->
-  <a-box
-    id="prevButton" class="clickable"
-    position="-0.78 1 2.3"
-    width="0.3" height="0.15" depth="0.08"
-    color="#4444ff"
-    event-set__enter="_event: mouseenter; color: #6666ff"
-    event-set__leave="_event: mouseleave; color: #4444ff">
-  </a-box>
-  <a-text value="PREV" position="-.93 1 2.35" scale="0.5 0.5 0.5" color="white"></a-text>
- 
-  <a-box
-    id="nextButton" class="clickable"
-    position="-.8 1.2 2.3"
-    width="0.3" height="0.15" depth="0.08"
-    color="#44aa44"
-    event-set__enter="_event: mouseenter; color: #66cc66"
-    event-set__leave="_event: mouseleave; color: #44aa44">
-  </a-box>
-  <a-text value="NEXT" position="-.95 1.2 2.34" scale="0.5 0.5 0.5" color="white"></a-text>
  
   <!-- BACKGROUND MODELS -->
   <a-entity
     gltf-model="models/claas_630.glb"
-    position="6 -0.7 -5"
-    rotation="0 25 0"
+    position="6 -0.7 1"
+    rotation="0 220 0"
     scale="0.012 0.012 0.012">
   </a-entity>
  
@@ -467,6 +565,9 @@
     rotation="0 -45 0"
     scale=".5 .5 .5">
   </a-entity>
+ 
+  <!-- WRIST PANEL — driven by wrist-panel component -->
+  <a-entity id="wristPanel" wrist-panel></a-entity>
  
   <!-- CAMERA / VR RIG -->
   <a-entity id="rig" position="0 0 3">
@@ -479,32 +580,6 @@
     <a-entity id="rightHand" hand-renderer="hand: right; color: #ffffff"></a-entity>
  
   </a-entity>
- 
-  <!-- MODEL SWITCHING -->
-  <script>
-  window.onload = function () {
-    let currentModel = 1;
-    const model1     = document.querySelector('#model1');
-    const model2     = document.querySelector('#model2');
-    const prevButton = document.querySelector('#prevButton');
-    const nextButton = document.querySelector('#nextButton');
- 
-    function showModel(n) {
-      model1.setAttribute('visible', n === 1);
-      model2.setAttribute('visible', n === 2);
-    }
- 
-    nextButton.addEventListener('mousedown', function () {
-      currentModel = currentModel >= 2 ? 1 : currentModel + 1;
-      showModel(currentModel);
-    });
- 
-    prevButton.addEventListener('mousedown', function () {
-      currentModel = currentModel <= 1 ? 2 : currentModel - 1;
-      showModel(currentModel);
-    });
-  };
-  </script>
  
 </a-scene>
 </body>
